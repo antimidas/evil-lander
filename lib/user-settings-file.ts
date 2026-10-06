@@ -1,7 +1,12 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { LandingPageSettings } from "@/lib/landing-page-shared";
-import { parseThemeConfig, type ThemeConfig } from "@/lib/theme-settings-shared";
+import {
+  isValidUserWallpaperList,
+  parseThemeConfig,
+  type ThemeConfig,
+  type UserWallpaper,
+} from "@/lib/theme-settings-shared";
 import { isProfileAvatar } from "@/lib/user-profile-shared";
 
 export type UserSettingsFile = {
@@ -11,6 +16,7 @@ export type UserSettingsFile = {
     string,
     {
       theme?: ThemeConfig;
+      wallpapers?: UserWallpaper[];
       landingWidgetIds?: string[];
       landingWidgetPositions?: Record<string, { x: number; y: number }>;
       profile?: { displayName: string; avatar: string };
@@ -75,6 +81,12 @@ export function readUserSettingsFile(): UserSettingsFile | null {
       !parseThemeConfig(value.theme)
     ) {
       throw new Error(`The user settings file contains an invalid theme for ${userId}.`);
+    }
+    if (
+      "wallpapers" in value &&
+      !isValidUserWallpaperList(value.wallpapers)
+    ) {
+      throw new Error(`The user settings file contains invalid wallpapers for ${userId}.`);
     }
     if (
       "profile" in value &&

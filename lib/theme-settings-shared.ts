@@ -6,6 +6,7 @@ export type ThemeConfig = {
   mode?: "light" | "dark";
 };
 
+
 export const defaultThemeConfig: ThemeConfig = {
   presetId: "midnight",
   primaryColor: "#8b7cff",
@@ -15,7 +16,33 @@ export const defaultThemeConfig: ThemeConfig = {
   mode: "light",
 };
 
-const MAX_THEME_IMAGE_BYTES = 64 * 1024 * 1024;
+export const solarThemeConfig: ThemeConfig = {
+  presetId: "solar",
+  primaryColor: "#ff9900",
+  bgColor: "#fffbe6",
+  backgroundImage: "radial-gradient(circle at top left, #ffe4b5 0%, transparent 50%), linear-gradient(to bottom, #fffbe6, #f0f0f0)",
+  mode: "light",
+};
+
+export const slateThemeConfig: ThemeConfig = {
+  presetId: "slate",
+  primaryColor: "#c0c0c0",
+  bgColor: "#1e293b",
+  backgroundImage: "radial-gradient(at center, #334155 0%, #1e293b 100%)",
+  mode: "dark",
+};
+
+export const oceanicThemeConfig: ThemeConfig = {
+  presetId: "oceanic",
+  primaryColor: "#00bfff",
+  bgColor: "#030712",
+  backgroundImage:
+    "radial-gradient(at center, #1d4ed8 0%, #030712 100%), linear-gradient(180deg, #030712, #0d152c)",
+  mode: "dark",
+};
+
+
+export const MAX_THEME_IMAGE_BYTES = 64 * 1024 * 1024;
 const MAX_BACKGROUND_VALUE_LENGTH = Math.ceil((MAX_THEME_IMAGE_BYTES * 4) / 3) + 128;
 
 function isSafeBackgroundImage(value: string) {
@@ -85,4 +112,68 @@ export function parseThemeConfig(value: unknown): ThemeConfig | null {
     backgroundImage: value.backgroundImage,
     mode: mode === "dark" ? "dark" : "light",
   };
+}
+
+export type UserWallpaper = { id: string; dataUrl: string };
+
+export const MAX_WALLPAPERS_PER_USER = 24;
+
+const wallpaperIdPattern = /^[a-f0-9-]{8,64}$/i;
+
+export function isWallpaperId(value: unknown): value is string {
+  return typeof value === "string" && wallpaperIdPattern.test(value);
+}
+
+export function isValidWallpaperImageDataUrl(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const match =
+    /^data:image\/(png|jpeg|webp|gif);base64,([A-Za-z0-9+/]+={0,2})$/.exec(
+      value,
+    );
+  if (!match || match[2].length % 4 !== 0) return false;
+
+  const bytes = Buffer.from(match[2], "base64");
+  if (bytes.length === 0 || bytes.length > MAX_THEME_IMAGE_BYTES) return false;
+  if (bytes.toString("base64") !== match[2]) return false;
+
+  switch (match[1]) {
+    case "png":
+      return bytes.subarray(0, 8).equals(
+        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      );
+    case "jpeg":
+      return bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+    case "gif":
+      return (
+        bytes.subarray(0, 6).toString("ascii") === "GIF87a" ||
+        bytes.subarray(0, 6).toString("ascii") === "GIF89a"
+      );
+    case "webp":
+      return (
+        bytes.subarray(0, 4).toString("ascii") === "RIFF" &&
+        bytes.subarray(8, 12).toString("ascii") === "WEBP"
+      );
+    default:
+      return false;
+  }
+}
+
+export function isValidUserWallpaperList(value: unknown): value is UserWallpaper[] {
+  if (!Array.isArray(value) || value.length > MAX_WALLPAPERS_PER_USER) return false;
+  const ids = new Set<string>();
+  for (const item of value) {
+    if (
+      typeof item !== "object" ||
+      item === null ||
+      Array.isArray(item) ||
+      !("id" in item) ||
+      !isWallpaperId(item.id) ||
+      !("dataUrl" in item) ||
+      !isValidWallpaperImageDataUrl(item.dataUrl)
+    ) {
+      return false;
+    }
+    ids.add(item.id);
+  }
+  return ids.size === value.length;
 }

@@ -54,3 +54,20 @@ export async function loadThemeWallpaper(key: string) {
     database.close();
   }
 }
+
+export async function listThemeWallpapers(): Promise<string[]> {
+  const database = await openWallpaperDatabase();
+  try {
+    return await new Promise<string[]>((resolve, reject) => {
+      const transaction = database.transaction(storeName, "readonly");
+      const request = transaction.objectStore(storeName).getAllKeys();
+      request.onsuccess = () => {
+        resolve(request.result as string[]);
+      };
+      request.onerror = () =>
+        reject(request.error ?? new Error("Unable to list wallpaper keys."));
+    });
+  } finally {
+    database.close();
+  }
+}

@@ -1,5 +1,11 @@
+import { randomUUID } from "node:crypto";
 import { getLandingPageSettings } from "@/lib/landing-page-data";
-import { parseThemeConfig } from "@/lib/theme-settings-shared";
+import {
+  isValidWallpaperImageDataUrl,
+  MAX_WALLPAPERS_PER_USER,
+  parseThemeConfig,
+  type UserWallpaper,
+} from "@/lib/theme-settings-shared";
 import {
   defaultUserProfile,
   isBuiltInAvatarId,
@@ -37,6 +43,63 @@ export function saveUserThemeSettings(userId: string, value: unknown) {
     landingPage,
   );
   return true;
+}
+
+export class WallpaperLimitError extends Error {}
+
+export function getUserWallpapers(userId: string): UserWallpaper[] {
+  getLandingPageSettings();
+  const file = readUserSettingsFile();
+  if (!file) throw new Error("The user settings file could not be initialized.");
+  return file.users[userId]?.wallpapers ?? [];
+}
+
+export function addUserWallpaper(
+  userId: string,
+  value: unknown,
+): UserWallpaper[] | null {
+  if (!isValidWallpaperImageDataUrl(value)) return null;
+  if (getUserWallpapers(userId).length >= MAX_WALLPAPERS_PER_USER) {
+    throw new WallpaperLimitError(
+      "You've reached the wallpaper limit. Delete one before adding another.",
+    );
+  }
+  const wallpaper: UserWallpaper = { id: randomUUID(), dataUrl: value };
+  const landingPage = getLandingPageSettings();
+  const updated = updateUserSettingsFile(
+    (file) => ({
+      ...file,
+      users: {
+        ...file.users,
+        [userId]: {
+          ...file.users[userId],
+          wallpapers: [...(file.users[userId]?.wallpapers ?? []), wallpaper],
+        },
+      },
+    }),
+    landingPage,
+  );
+  return updated.users[userId]?.wallpapers ?? [];
+}
+
+export function removeUserWallpaper(userId: string, id: string): UserWallpaper[] {
+  const landingPage = getLandingPageSettings();
+  const updated = updateUserSettingsFile(
+    (file) => ({
+      ...file,
+      users: {
+        ...file.users,
+        [userId]: {
+          ...file.users[userId],
+          wallpapers: (file.users[userId]?.wallpapers ?? []).filter(
+            (wallpaper) => wallpaper.id !== id,
+          ),
+        },
+      },
+    }),
+    landingPage,
+  );
+  return updated.users[userId]?.wallpapers ?? [];
 }
 
 export function getUserLandingWidgetIds(userId: string) {

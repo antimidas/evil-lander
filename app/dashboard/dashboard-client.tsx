@@ -25,6 +25,7 @@ import {
   defaultThemeConfig,
   parseThemeConfig,
   type ThemeConfig,
+  type UserWallpaper,
 } from "@/lib/theme-settings-shared";
 
 const subscribeToClock = (callback: () => void) => {
@@ -146,6 +147,13 @@ const themePresets: Array<ThemeConfig & { name: string; description: string }> =
   },
 ];
 
+function pageAmbientGradient(config: ThemeConfig) {
+  // The outer page (header + tab bar area) always uses a soft gradient derived
+  // from the active theme's colors, independent of any custom wallpaper image
+  // chosen for the dashboard content area.
+  return `radial-gradient(ellipse at 15% 8%, color-mix(in srgb, ${config.primaryColor} 38%, transparent), transparent 42%), radial-gradient(ellipse at 85% 92%, color-mix(in srgb, ${config.primaryColor} 22%, transparent), transparent 48%), linear-gradient(135deg, ${config.bgColor}, color-mix(in srgb, ${config.bgColor} 82%, white 14%) 55%, ${config.bgColor})`;
+}
+
 function wallpaperUrlFromBackground(backgroundImage: string) {
   const match = backgroundImage.match(/^url\((?:"([^"]*)"|'([^']*)'|([^)]*))\)$/);
   const url = match?.[1] ?? match?.[2] ?? match?.[3] ?? "";
@@ -201,6 +209,89 @@ async function persistThemeSettings(config: ThemeConfig) {
   const saved = parseThemeConfig(result.theme);
   if (!saved) throw new Error("The server returned invalid saved theme settings.");
   return saved;
+}
+
+function isUserWallpaperList(value: unknown): value is UserWallpaper[] {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (item) =>
+        typeof item === "object" &&
+        item !== null &&
+        typeof (item as { id?: unknown }).id === "string" &&
+        typeof (item as { dataUrl?: unknown }).dataUrl === "string",
+    )
+  );
+}
+
+async function errorMessageFromResponse(response: Response, fallback: string) {
+  const result: unknown = await response.json().catch(() => null);
+  return typeof result === "object" &&
+    result !== null &&
+    "error" in result &&
+    typeof result.error === "string"
+    ? result.error
+    : fallback;
+}
+
+async function fetchUploadedWallpapers(): Promise<UserWallpaper[]> {
+  const response = await fetch("/api/user-settings/wallpapers", {
+    cache: "no-store",
+  });
+  const result: unknown = await response.json();
+  if (
+    !response.ok ||
+    typeof result !== "object" ||
+    result === null ||
+    !("wallpapers" in result) ||
+    !isUserWallpaperList(result.wallpapers)
+  ) {
+    throw new Error(
+      await errorMessageFromResponse(response, "Unable to load your saved wallpapers."),
+    );
+  }
+  return result.wallpapers;
+}
+
+async function uploadWallpaper(dataUrl: string): Promise<UserWallpaper[]> {
+  const response = await fetch("/api/user-settings/wallpapers", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ dataUrl }),
+  });
+  const result: unknown = await response.json();
+  if (
+    !response.ok ||
+    typeof result !== "object" ||
+    result === null ||
+    !("wallpapers" in result) ||
+    !isUserWallpaperList(result.wallpapers)
+  ) {
+    throw new Error(
+      await errorMessageFromResponse(response, "Unable to save this wallpaper."),
+    );
+  }
+  return result.wallpapers;
+}
+
+async function deleteUploadedWallpaper(id: string): Promise<UserWallpaper[]> {
+  const response = await fetch(
+    `/api/user-settings/wallpapers/${encodeURIComponent(id)}`,
+    { method: "DELETE" },
+  );
+  const result: unknown = await response.json();
+  if (
+    !response.ok ||
+    typeof result !== "object" ||
+    result === null ||
+    !("wallpapers" in result) ||
+    !isUserWallpaperList(result.wallpapers)
+  ) {
+    throw new Error(
+      await errorMessageFromResponse(response, "Unable to delete this wallpaper."),
+    );
+  }
+  return result.wallpapers;
 }
 
 function wallpaperBackgroundFromInput(value: string) {
@@ -411,6 +502,31 @@ function ThemeCustomizationModal({
   );
   const [wallpaperError, setWallpaperError] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+  const [uploadedWallpapers, setUploadedWallpapers] = useState<UserWallpaper[]>([]);
+  const [isLoadingWallpapers, setIsLoadingWallpapers] = useState(true);
+  const [isUploadingWallpaper, setIsUploadingWallpaper] = useState(false);
+  const [deletingWallpaperId, setDeletingWallpaperId] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const wallpapers = await fetchUploadedWallpapers();
+        if (!cancelled) setUploadedWallpapers(wallpapers);
+      } catch (error) {
+        if (!cancelled) {
+          setWallpaperError(
+            error instanceof Error ? error.message : "Unable to load your saved wallpapers.",
+          );
+        }
+      } finally {
+        if (!cancelled) setIsLoadingWallpapers(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const inputClass =
     "w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 dark:border-zinc-600 dark:bg-zinc-900 dark:text-white";
   const selectedPreset =
@@ -683,11 +799,91 @@ function ThemeCustomizationModal({
                 </span>
               )}
             </label>
-            <label className="mt-4 block text-sm font-medium text-zinc-700 dark:text-zinc-200" htmlFor="theme-wallpaper-file">
-              Or choose a wallpaper from your device
+
+            <div className="mt-4">
+              <span className="block text-sm font-medium text-zinc-700 dark:text-zinc-200">
+                Uploaded wallpapers
+              </span>
+              <p className="mt-1 text-xs text-zinc-500">
+                Pick a wallpaper you&apos;ve already uploaded, or add a new one.
+              </p>
+              {isLoadingWallpapers ? (
+                <p className="mt-2 text-xs text-zinc-500">Loading your saved wallpapers…</p>
+              ) : (
+                <div className="mt-2 grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-5">
+                  {uploadedWallpapers.map((wallpaper) => {
+                    const backgroundImage = `url("${wallpaper.dataUrl}")`;
+                    const isSelected = draft.backgroundImage === backgroundImage;
+                    return (
+                      <div className="group relative" key={wallpaper.id}>
+                        <button
+                          aria-label="Use this wallpaper"
+                          aria-pressed={isSelected}
+                          className={`block aspect-video w-full overflow-hidden rounded-lg border bg-cover bg-center transition ${
+                            isSelected
+                              ? "border-indigo-500 ring-2 ring-indigo-500/30"
+                              : "border-zinc-200 hover:border-zinc-400 dark:border-zinc-700 dark:hover:border-zinc-500"
+                          }`}
+                          onClick={() => {
+                            setWallpaperInput("");
+                            setWallpaperError("");
+                            setDraft((current) => ({
+                              ...current,
+                              presetId: "custom",
+                              backgroundImage,
+                            }));
+                          }}
+                          style={{ backgroundImage }}
+                          type="button"
+                        />
+                        <button
+                          aria-label="Delete this wallpaper"
+                          className="absolute -right-1.5 -top-1.5 hidden h-5 w-5 items-center justify-center rounded-full bg-zinc-900/80 text-xs font-bold leading-none text-white shadow transition group-hover:flex hover:bg-red-600 disabled:cursor-not-allowed disabled:opacity-60"
+                          disabled={deletingWallpaperId === wallpaper.id}
+                          onClick={async () => {
+                            setDeletingWallpaperId(wallpaper.id);
+                            setWallpaperError("");
+                            try {
+                              const wallpapers = await deleteUploadedWallpaper(wallpaper.id);
+                              setUploadedWallpapers(wallpapers);
+                              if (isSelected) {
+                                setDraft((current) => ({
+                                  ...current,
+                                  presetId: "custom",
+                                  backgroundImage: "none",
+                                }));
+                              }
+                            } catch (error) {
+                              setWallpaperError(
+                                error instanceof Error
+                                  ? error.message
+                                  : "Unable to delete this wallpaper.",
+                              );
+                            } finally {
+                              setDeletingWallpaperId("");
+                            }
+                          }}
+                          type="button"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    );
+                  })}
+                  <label
+                    className={`flex aspect-video w-full cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-zinc-300 text-center text-xs font-medium text-zinc-500 transition hover:border-indigo-400 hover:text-indigo-600 dark:border-zinc-600 dark:text-zinc-400 ${
+                      isUploadingWallpaper ? "pointer-events-none opacity-60" : ""
+                    }`}
+                    htmlFor="theme-wallpaper-file"
+                  >
+                    <span className="text-lg leading-none">+</span>
+                    {isUploadingWallpaper ? "Uploading…" : "Add more"}
+                  </label>
+                </div>
+              )}
               <input
                 accept="image/png,image/jpeg,image/webp,image/gif"
-                className={`${inputClass} mt-1 file:mr-3 file:rounded-md file:border-0 file:bg-transparent file:px-2 file:py-1 file:font-semibold`}
+                className="sr-only"
                 id="theme-wallpaper-file"
                 onChange={(event) => {
                   const file = event.currentTarget.files?.[0];
@@ -703,17 +899,33 @@ function ThemeCustomizationModal({
                   }
                   const reader = new FileReader();
                   reader.onload = () => {
-                    if (typeof reader.result !== "string") {
-                      setWallpaperError("The selected wallpaper could not be read.");
-                      return;
-                    }
-                    setDraft((current) => ({
-                      ...current,
-                      presetId: "custom",
-                      backgroundImage: `url("${reader.result}")`,
-                    }));
-                    setWallpaperInput("");
-                    setWallpaperError("");
+                    void (async () => {
+                      if (typeof reader.result !== "string") {
+                        setWallpaperError("The selected wallpaper could not be read.");
+                        return;
+                      }
+                      setIsUploadingWallpaper(true);
+                      setWallpaperError("");
+                      try {
+                        const dataUrl = reader.result;
+                        const wallpapers = await uploadWallpaper(dataUrl);
+                        setUploadedWallpapers(wallpapers);
+                        setDraft((current) => ({
+                          ...current,
+                          presetId: "custom",
+                          backgroundImage: `url("${dataUrl}")`,
+                        }));
+                        setWallpaperInput("");
+                      } catch (error) {
+                        setWallpaperError(
+                          error instanceof Error
+                            ? error.message
+                            : "Unable to save this wallpaper.",
+                        );
+                      } finally {
+                        setIsUploadingWallpaper(false);
+                      }
+                    })();
                   };
                   reader.onerror = () =>
                     setWallpaperError("The selected wallpaper could not be read.");
@@ -722,9 +934,9 @@ function ThemeCustomizationModal({
                 type="file"
               />
               <span className="mt-1 block text-xs font-normal text-zinc-500">
-                Wallpaper images up to 64 MiB are saved in your server-side user settings file.
+                Wallpaper images up to 64 MiB are saved to your account so you can reuse them later.
               </span>
-            </label>
+            </div>
             {draft.backgroundImage !== "none" && (
               <button
                 className="mt-2 rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-xs font-medium text-zinc-600 transition hover:border-red-400 hover:text-red-700 dark:border-zinc-700 dark:text-zinc-300 dark:hover:text-red-300"
@@ -3472,12 +3684,10 @@ export default function DashboardClient({
       className={`${activeDashboard.kind === "iframe" ? "h-dvh overflow-hidden pb-0" : "min-h-dvh"} flex flex-col px-2 py-2 text-zinc-900 dark:text-white sm:px-3 md:px-4 md:py-3 ${theme === "dark" ? "bg-black" : "bg-zinc-50"}`}
       style={{
         backgroundColor: themeConfig.bgColor,
-        backgroundImage:
-          themeConfig.backgroundImage === "none"
-            ? undefined
-            : themeConfig.backgroundImage,
+        backgroundImage: pageAmbientGradient(themeConfig),
         backgroundPosition: "center",
         backgroundSize: "cover",
+        backgroundAttachment: "fixed",
       }}
     >
       <header className="mb-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-xl border border-zinc-200/80 bg-white/70 px-3 py-2 shadow-sm backdrop-blur-md dark:border-zinc-700/80 dark:bg-zinc-950/75">
