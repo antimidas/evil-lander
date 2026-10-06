@@ -19,12 +19,12 @@ Requirements: macOS or a glibc-based Linux distribution, an internet connection,
 Clone the repository and run the installer:
 
 ```bash
-git clone https://github.com/3evils/evil-lander.git
+git clone https://github.com/antimidas/evil-lander.git
 cd evil-lander
 ./scripts/install.sh
 ```
 
-If you fork the project, replace `3evils` with your GitHub account or organization.
+If you fork the project, replace `antimidas` with your GitHub account or organization.
 
 The installer supports:
 
