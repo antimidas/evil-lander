@@ -12,6 +12,20 @@ Evil-Lander is a self-hosted homelab dashboard with a customizable public landin
 - Home Assistant entity, light, fan, thermostat, and dashboard cards.
 - Theme presets, a live theme preview, custom colors, and persistent wallpaper uploads.
 
+## Screenshots
+
+### Dashboard
+
+![Evil-Lander dashboard with Home Assistant widgets and desktop shortcuts](./screenshots/dashboard.png)
+
+### Landing page
+
+![Evil-Lander public landing page](./screenshots/landing-page.png)
+
+### Theme picker
+
+![Evil-Lander desktop theme picker with live preview and theme presets](./screenshots/theme-picker.png)
+
 ## Install on Windows, macOS, or Linux
 
 ### Windows
