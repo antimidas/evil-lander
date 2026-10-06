@@ -1,11 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type FormEvent, type PointerEvent } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type ChangeEvent, type FormEvent, type PointerEvent } from "react";
 import Image from "next/image";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useRouter } from "next/navigation";
 import type { AuthUser } from "@/lib/auth";
+import {
+  avatarImageSource,
+  builtInAvatarIds,
+  isUserProfile,
+  type UserProfile,
+} from "@/lib/user-profile-shared";
 import type {
   DashboardCard,
   DashboardCardInput,
@@ -2793,8 +2799,213 @@ function DesktopObjectModal({
     </div>
   );
 }
-export default function DashboardClient({ user }: { user: AuthUser }) {
+function UserProfileModal({
+  email,
+  profile,
+  onClose,
+  onSaved,
+}: {
+  email: string;
+  profile: UserProfile;
+  onClose: () => void;
+  onSaved: (profile: UserProfile) => void;
+}) {
+  const [displayName, setDisplayName] = useState(profile.displayName);
+  const [avatar, setAvatar] = useState(profile.avatar);
+  const [error, setError] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleImageChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = "";
+    if (!file) return;
+    if (!["image/png", "image/jpeg", "image/webp", "image/gif"].includes(file.type)) {
+      setError("Choose a PNG, JPEG, WebP, or GIF image.");
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      setError("Avatar images must be 2 MiB or smaller.");
+      return;
+    }
+
+    setError("");
+    const reader = new FileReader();
+    reader.onerror = () => setError("Unable to read the selected image.");
+    reader.onload = () => {
+      if (typeof reader.result !== "string") {
+        setError("Unable to read the selected image.");
+        return;
+      }
+      setAvatar(reader.result);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleSave = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setError("");
+    setIsSaving(true);
+    try {
+      const response = await fetch("/api/user-settings/profile", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          profile: { displayName: displayName.trim(), avatar },
+        }),
+      });
+      const result: unknown = await response.json();
+      if (
+        !response.ok ||
+        typeof result !== "object" ||
+        result === null ||
+        !("profile" in result) ||
+        !isUserProfile(result.profile)
+      ) {
+        throw new Error(errorMessage(result, "Unable to save your profile."));
+      }
+      onSaved(result.profile);
+      onClose();
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Unable to save your profile.");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+      role="presentation"
+    >
+      <section
+        aria-labelledby="profile-title"
+        aria-modal="true"
+        className="max-h-[90dvh] w-full max-w-xl overflow-y-auto rounded-2xl border border-zinc-200 bg-white p-6 text-zinc-900 shadow-2xl dark:border-zinc-700 dark:bg-zinc-900 dark:text-white"
+        role="dialog"
+      >
+        <h2 className="text-xl font-bold" id="profile-title">Edit profile</h2>
+        <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+          Choose an avatar or upload your own image, and set the name shown on your dashboard.
+        </p>
+        {error && (
+          <p className="mt-4 rounded-lg bg-red-100 px-3 py-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-300" role="alert">
+            {error}
+          </p>
+        )}
+        <form className="mt-5 space-y-5" onSubmit={(event) => void handleSave(event)}>
+          <label className="block text-sm font-medium" htmlFor="profile-email">
+            Email address
+            <input
+              className="mt-1 w-full rounded-lg border border-zinc-300 bg-zinc-100 px-3 py-2 text-zinc-500 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-400"
+              id="profile-email"
+              readOnly
+              value={email}
+            />
+          </label>
+          <label className="block text-sm font-medium" htmlFor="profile-display-name">
+            Display name
+            <input
+              autoComplete="nickname"
+              className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-zinc-900 dark:border-zinc-600 dark:bg-zinc-800 dark:text-white"
+              id="profile-display-name"
+              maxLength={40}
+              onChange={(event) => setDisplayName(event.target.value)}
+              required
+              value={displayName}
+            />
+          </label>
+          <div>
+            <p className="mb-2 text-sm font-medium">Choose an avatar</p>
+            <div className="grid grid-cols-4 gap-2 sm:grid-cols-6">
+              {builtInAvatarIds.map((avatarId) => (
+                <button
+                  aria-label={`Select avatar ${avatarId.slice(-2)}`}
+                  aria-pressed={avatar === avatarId}
+                  className={`rounded-full border-2 p-1 transition ${
+                    avatar === avatarId
+                      ? "border-indigo-500 ring-2 ring-indigo-500/30"
+                      : "border-transparent hover:border-zinc-400"
+                  }`}
+                  key={avatarId}
+                  onClick={() => {
+                    setAvatar(avatarId);
+                    setError("");
+                  }}
+                  title={`Avatar ${avatarId.slice(-2)}`}
+                  type="button"
+                >
+                  <Image
+                    alt=""
+                    className="aspect-square w-full rounded-full bg-zinc-100 dark:bg-zinc-800"
+                    height={72}
+                    src={avatarImageSource(avatarId)}
+                    unoptimized
+                    width={72}
+                  />
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <Image
+              alt="Selected avatar preview"
+              className="h-14 w-14 rounded-full border border-zinc-300 bg-zinc-100 object-cover dark:border-zinc-700 dark:bg-zinc-800"
+              height={56}
+              src={avatarImageSource(avatar)}
+              unoptimized
+              width={56}
+            />
+            <input
+              accept="image/png,image/jpeg,image/webp,image/gif"
+              className="sr-only"
+              onChange={handleImageChange}
+              ref={fileInputRef}
+              type="file"
+            />
+            <button
+              className="rounded-lg border border-zinc-300 px-3 py-2 text-sm font-medium hover:bg-zinc-100 dark:border-zinc-600 dark:hover:bg-zinc-800"
+              onClick={() => fileInputRef.current?.click()}
+              type="button"
+            >
+              Upload image
+            </button>
+            <span className="text-xs text-zinc-500">PNG, JPEG, WebP, or GIF; up to 2 MiB</span>
+          </div>
+          <div className="flex justify-end gap-2 border-t border-zinc-200 pt-4 dark:border-zinc-700">
+            <button
+              className="rounded-lg border border-zinc-300 px-4 py-2 text-sm hover:bg-zinc-100 dark:border-zinc-600 dark:hover:bg-zinc-800"
+              onClick={onClose}
+              type="button"
+            >
+              Cancel
+            </button>
+            <button
+              className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:cursor-wait disabled:opacity-60"
+              disabled={isSaving}
+              type="submit"
+            >
+              {isSaving ? "Saving…" : "Save profile"}
+            </button>
+          </div>
+        </form>
+      </section>
+    </div>
+  );
+}
+
+export default function DashboardClient({
+  user,
+  profile: initialProfile,
+}: {
+  user: AuthUser;
+  profile: UserProfile;
+}) {
   const router = useRouter();
+  const [profile, setProfile] = useState(initialProfile);
   const [themeConfig, setThemeConfig] = useState(defaultThemeConfig);
   const [selectedObjectId, setSelectedObjectId] = useState<string | null>(null);
   const [activeDashboardId, setActiveDashboardId] = useState<string | null>(null);
@@ -2811,6 +3022,7 @@ export default function DashboardClient({ user }: { user: AuthUser }) {
   const [addContentSectionId, setAddContentSectionId] = useState<string | null>(null);
   const [isThemeOpen, setIsThemeOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [notice, setNotice] = useState("");
 
   const saveThemeConfig = async (config: ThemeConfig) => {
@@ -3273,7 +3485,17 @@ export default function DashboardClient({ user }: { user: AuthUser }) {
           </h1>
           <span className="hidden h-6 w-px bg-zinc-300 dark:bg-zinc-700 sm:block" />
           <div className="flex min-w-0 items-center gap-2 text-xs text-zinc-600 dark:text-zinc-300">
-            <span className="max-w-[10rem] truncate sm:max-w-none">{user.email}</span>
+            <Image
+              alt=""
+              className="h-8 w-8 shrink-0 rounded-full border border-zinc-300 bg-zinc-100 object-cover dark:border-zinc-700 dark:bg-zinc-800"
+              height={32}
+              src={avatarImageSource(profile.avatar)}
+              unoptimized
+              width={32}
+            />
+            <span className="max-w-[10rem] truncate font-semibold text-zinc-900 dark:text-zinc-100">
+              {profile.displayName}
+            </span>
             {user.role === "admin" && (
               <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">
                 Admin
@@ -3384,6 +3606,13 @@ export default function DashboardClient({ user }: { user: AuthUser }) {
               Edit landing page
             </button>
           )}
+          <button
+            className="rounded-lg border border-zinc-300 bg-transparent px-2.5 py-1.5 text-xs font-medium transition hover:border-indigo-500 hover:text-indigo-700 dark:border-zinc-600 dark:hover:border-indigo-400 dark:hover:text-indigo-200"
+            onClick={() => setIsProfileOpen(true)}
+            type="button"
+          >
+            Profile
+          </button>
           <button className="rounded-lg border border-zinc-300 bg-transparent px-2.5 py-1.5 text-xs font-medium transition hover:border-red-500 hover:text-red-700 dark:border-zinc-600 dark:hover:border-red-400 dark:hover:text-red-300" onClick={() => void handleLogout()} type="button">
             Log out
           </button>
@@ -3500,6 +3729,17 @@ export default function DashboardClient({ user }: { user: AuthUser }) {
             );
             setNotice("Home Assistant connection saved.");
           }}
+        />
+      )}
+      {isProfileOpen && (
+        <UserProfileModal
+          email={user.email}
+          onClose={() => setIsProfileOpen(false)}
+          onSaved={(nextProfile) => {
+            setProfile(nextProfile);
+            setNotice("Profile saved.");
+          }}
+          profile={profile}
         />
       )}
     </main>

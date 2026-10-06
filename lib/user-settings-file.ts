@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { LandingPageSettings } from "@/lib/landing-page-shared";
 import { parseThemeConfig, type ThemeConfig } from "@/lib/theme-settings-shared";
+import { isProfileAvatar } from "@/lib/user-profile-shared";
 
 export type UserSettingsFile = {
   version: 1;
@@ -12,6 +13,7 @@ export type UserSettingsFile = {
       theme?: ThemeConfig;
       landingWidgetIds?: string[];
       landingWidgetPositions?: Record<string, { x: number; y: number }>;
+      profile?: { displayName: string; avatar: string };
     }
   >;
 };
@@ -73,6 +75,20 @@ export function readUserSettingsFile(): UserSettingsFile | null {
       !parseThemeConfig(value.theme)
     ) {
       throw new Error(`The user settings file contains an invalid theme for ${userId}.`);
+    }
+    if (
+      "profile" in value &&
+      (typeof value.profile !== "object" ||
+        value.profile === null ||
+        Array.isArray(value.profile) ||
+        typeof value.profile.displayName !== "string" ||
+        value.profile.displayName.length < 1 ||
+        value.profile.displayName.length > 40 ||
+        value.profile.displayName.trim() !== value.profile.displayName ||
+        /[\u0000-\u001f\u007f]/.test(value.profile.displayName) ||
+        !isProfileAvatar(value.profile.avatar))
+    ) {
+      throw new Error(`The user settings file contains an invalid profile for ${userId}.`);
     }
     if (
       "landingWidgetIds" in value &&

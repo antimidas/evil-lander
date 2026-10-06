@@ -4,13 +4,16 @@ Evil-Lander is a self-hosted homelab dashboard with a customizable public landin
 
 ## Features
 
-- Public landing page with selectable original, solid-color, or uploaded-image backgrounds; an admin-managed logo; up to eight movable images; and a movable, font-customizable welcome text box.
+- Completely customizable public landing page: admins can choose original, solid-color, or uploaded-image backgrounds; upload and position a logo and up to eight images; and write, style, and position welcome text.
 - Account signup and login. The first account created is the admin; later accounts are regular users.
+- Per-user profile editor with a display name, built-in avatar picker, and custom avatar image uploads.
 - Multiple dashboards with tabs and dedicated iframe dashboards.
 - Desktop shortcuts and frosted-glass widgets that can be moved and resized. Widgets can collapse to desktop icons.
 - Markdown, links, buttons, images, clock, calendar, weather, and website embeds.
 - Home Assistant entity, light, fan, thermostat, and dashboard cards.
 - Theme presets, a live theme preview, custom colors, and persistent wallpaper uploads.
+
+The built-in avatar artwork is generated with the [DiceBear Adventurer style](https://github.com/dicebear/dicebear). The avatar artwork is available under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/); the SVG files are included locally so the picker does not rely on an external image service.
 
 ## Screenshots
 
@@ -182,7 +185,7 @@ The installer creates `.env.local` with a random 256-bit `AUTH_ENCRYPTION_KEY` i
 - Keep `.env.local` private and do not commit it.
 - Back up the key somewhere secure. Saved Home Assistant credentials cannot be decrypted if the key is lost or changed.
 - `AUTH_DB_PATH` optionally changes the SQLite database path. By default, account and dashboard data is stored in `.data/auth.sqlite`.
-- Landing-page appearance, each user's desktop theme, and each user's selected private landing-page widgets are kept together in the editable `.data/user-settings.json` file. It is created automatically, kept out of Git, and read again on each settings request. Back up this file together with `.data/auth.sqlite`.
+- Landing-page appearance, each user's desktop theme, profile, and selected private landing-page widgets are kept together in the editable `.data/user-settings.json` file. It is created automatically, kept out of Git, and read again on each settings request. Back up this file together with `.data/auth.sqlite`.
 - Store `.data` on persistent storage. The SQLite setup is intended for a single app server, not multiple independently running instances.
 
 The first account is the admin. The admin can configure the Home Assistant URL and long-lived access token from **Home Assistant settings** in dashboard edit mode. The token is encrypted at rest and is not returned to the browser.
@@ -224,6 +227,8 @@ Stop it with `Ctrl+C`. For development, use `pnpm dev`.
 ## Usage
 
 The public home page does not open the login dialog automatically. Use **Log in** to sign in or create an account. Only signed-in admins can see **Landing page settings** and customize the public landing page. After signing in, admins can choose the original artwork, a solid color, or a custom background; upload a logo and up to eight additional images; and customize the welcome text font, size, and color. Arrange the logo, images, and text by dragging them on the page. Landing images support PNG, JPEG, WebP, and GIF, with a 12 MB per-image and 24 MB total upload limit.
+
+On the dashboard, open **Profile** to edit your display name and avatar. Choose from the included avatar picker or upload a PNG, JPEG, WebP, or GIF image up to 2 MiB. Profile changes are saved in `.data/user-settings.json` and follow your account across browsers.
 
 Signed-in users can choose **Landing widgets** on the home page to display their own dashboard objects there; private widgets are fetched and rendered only while signed in. Use **Arrange widgets** and drag a widget directly to move it; **Save widget layout** persists its position in `.data/user-settings.json`. Landing widgets display without an added title card or panel. On the dashboard, **Landing page** returns home without signing out, and an admin can use **Edit landing page** to open its settings directly. The dashboard returns to the landing page after one minute without pointer, keyboard, touch, or scroll activity; this does not sign the user out. Desktop themes and uploaded wallpapers are saved server-side in `.data/user-settings.json` and follow the account across browsers.
 

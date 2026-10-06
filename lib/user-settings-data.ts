@@ -1,5 +1,11 @@
 import { getLandingPageSettings } from "@/lib/landing-page-data";
 import { parseThemeConfig } from "@/lib/theme-settings-shared";
+import {
+  defaultUserProfile,
+  isBuiltInAvatarId,
+  isUserProfile,
+  type UserProfile,
+} from "@/lib/user-profile-shared";
 import { readUserSettingsFile, updateUserSettingsFile } from "@/lib/user-settings-file";
 
 export function getUserThemeSettings(userId: string) {
@@ -71,4 +77,91 @@ export function saveUserLandingWidgets(
     }),
     landingPage,
   );
+}
+
+export function getUserProfile(userId: string, email: string): UserProfile {
+  getLandingPageSettings();
+  const file = readUserSettingsFile();
+  if (!file) throw new Error("The user settings file could not be initialized.");
+  const profile = file.users[userId]?.profile;
+  if (!profile) return defaultUserProfile(email);
+  if (
+    !isUserProfile(profile) ||
+    (!isBuiltInAvatarId(profile.avatar) && !isValidAvatarUpload(profile.avatar))
+  ) {
+    throw new Error(`Invalid profile settings for user ${userId}.`);
+  }
+  return profile;
+}
+
+function isValidAvatarUpload(value: unknown): value is string {
+  if (
+    typeof value !== "string" ||
+    value.length > 2_800_000 ||
+    isBuiltInAvatarId(value)
+  ) {
+    return false;
+  }
+  const match =
+    /^data:image\/(png|jpeg|webp|gif);base64,([A-Za-z0-9+/]+={0,2})$/.exec(
+      value,
+    );
+  if (!match) return false;
+
+  const bytes = Buffer.from(match[2], "base64");
+  if (bytes.length === 0 || bytes.length > 2 * 1024 * 1024) return false;
+  if (bytes.toString("base64") !== match[2]) return false;
+
+  switch (match[1]) {
+    case "png":
+      return bytes.subarray(0, 8).equals(
+        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      );
+    case "jpeg":
+      return bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+    case "gif":
+      return (
+        bytes.subarray(0, 6).toString("ascii") === "GIF87a" ||
+        bytes.subarray(0, 6).toString("ascii") === "GIF89a"
+      );
+    case "webp":
+      return (
+        bytes.subarray(0, 4).toString("ascii") === "RIFF" &&
+        bytes.subarray(8, 12).toString("ascii") === "WEBP"
+      );
+    default:
+      return false;
+  }
+}
+
+export function saveUserProfile(
+  userId: string,
+  value: unknown,
+): UserProfile | null {
+  if (
+    !isUserProfile(value) ||
+    (!isBuiltInAvatarId(value.avatar) && !isValidAvatarUpload(value.avatar))
+  ) {
+    return null;
+  }
+
+  const profile = {
+    displayName: value.displayName,
+    avatar: value.avatar,
+  };
+  const landingPage = getLandingPageSettings();
+  updateUserSettingsFile(
+    (file) => ({
+      ...file,
+      users: {
+        ...file.users,
+        [userId]: {
+          ...file.users[userId],
+          profile,
+        },
+      },
+    }),
+    landingPage,
+  );
+  return profile;
 }

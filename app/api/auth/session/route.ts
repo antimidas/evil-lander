@@ -1,10 +1,15 @@
 import { getSessionUser } from "@/lib/auth";
+import { getUserProfile } from "@/lib/user-settings-data";
 
 export const runtime = "nodejs";
 
 export async function GET() {
   try {
-    return Response.json({ user: await getSessionUser() });
+    const user = await getSessionUser();
+    return Response.json({
+      user,
+      profile: user ? getUserProfile(user.id, user.email) : null,
+    }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     console.error("Session lookup failed:", error);
     return Response.json(

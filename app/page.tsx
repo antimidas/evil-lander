@@ -11,9 +11,14 @@ import {
   defaultLandingPageSettings,
   type LandingPageSettings,
 } from "@/lib/landing-page-shared";
+import {
+  avatarImageSource,
+  isUserProfile,
+  type UserProfile,
+} from "@/lib/user-profile-shared";
 
 type AuthMode = "login" | "signup";
-type SessionUser = { id: string; email: string; role: "admin" | "user" };
+type SessionUser = { id: string; email: string; role: "admin" | "user" } & UserProfile;
 type LandingWidgetPosition = { x: number; y: number };
 
 function defaultLandingWidgetPosition(index: number): LandingWidgetPosition {
@@ -253,7 +258,9 @@ export default function Home() {
           !("email" in result.user) ||
           typeof result.user.email !== "string" ||
           !("role" in result.user) ||
-          (result.user.role !== "admin" && result.user.role !== "user")
+          (result.user.role !== "admin" && result.user.role !== "user") ||
+          !("profile" in result) ||
+          !isUserProfile(result.profile)
         ) {
           setSessionUser(null);
           return;
@@ -262,6 +269,7 @@ export default function Home() {
           id: result.user.id,
           email: result.user.email,
           role: result.user.role,
+          ...result.profile,
         });
         if (
           result.user.role === "admin" &&
@@ -835,9 +843,17 @@ export default function Home() {
         </div>
       )}
       {sessionUser ? (
-        <div className="fixed bottom-5 right-5 z-20 flex items-center gap-2">
-          <span className="hidden rounded-full border border-white/30 bg-black/45 px-4 py-2.5 text-sm text-white backdrop-blur-sm sm:inline">
-            {sessionUser.email}
+        <div className="fixed bottom-5 right-5 z-20 flex max-w-[calc(100vw-2.5rem)] flex-wrap items-center justify-end gap-2">
+          <span className="flex items-center gap-2 rounded-full border border-white/30 bg-black/45 py-1.5 pl-1.5 pr-3 text-sm text-white backdrop-blur-sm">
+            <Image
+              alt=""
+              className="h-7 w-7 rounded-full bg-white/10 object-cover"
+              height={28}
+              src={avatarImageSource(sessionUser.avatar)}
+              unoptimized
+              width={28}
+            />
+            <span className="hidden max-w-[8rem] truncate sm:inline">{sessionUser.displayName}</span>
           </span>
           <button
             className="rounded-full border border-fuchsia-300/60 bg-black/45 px-5 py-2.5 text-sm font-semibold text-white shadow-lg backdrop-blur-sm transition hover:border-fuchsia-200 hover:bg-black/70 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fuchsia-300"
