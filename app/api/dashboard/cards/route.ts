@@ -2,7 +2,6 @@ import { getSessionUser } from "@/lib/auth";
 import { createCard, getDashboard } from "@/lib/dashboard-data";
 import { readCardInput } from "@/lib/dashboard-validation";
 
-export const runtime = "nodejs";
 
 export async function POST(request: Request) {
   try {

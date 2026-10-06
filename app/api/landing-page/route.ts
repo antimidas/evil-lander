@@ -5,7 +5,6 @@ import {
   saveLandingPageSettings,
 } from "@/lib/landing-page-data";
 
-export const runtime = "nodejs";
 
 export async function GET() {
   try {

@@ -1775,6 +1775,7 @@ export function DashboardCardContent({
     return (
       <iframe
         className="block h-full min-h-0 w-full border-0 bg-white"
+        loading="lazy"
         referrerPolicy="strict-origin-when-cross-origin"
         src={dashboardUrl.toString()}
         title={card.title}
@@ -1800,6 +1801,10 @@ function readCookie(name: string) {
     .split("; ")
     .find((entry) => entry.startsWith(`${name}=`));
   return match ? decodeURIComponent(match.slice(name.length + 1)) : null;
+}
+
+function writeCookie(name: string, value: string) {
+  document.cookie = `${name}=${encodeURIComponent(value)}; Path=/; Max-Age=31536000; SameSite=Lax`;
 }
 
 function WebsiteEmbed({ url, title }: { url: string; title: string }) {
@@ -2705,22 +2710,25 @@ function DesktopObjectModal({
   homeAssistantBaseUrl,
   onClose,
   onOpenAsDashboard,
+  visible,
 }: {
   card: DashboardCard;
   homeAssistantBaseUrl: string;
   onClose: () => void;
+  visible: boolean;
   onOpenAsDashboard: () => Promise<void>;
 }) {
   const [dashboardError, setDashboardError] = useState("");
   const [creatingDashboard, setCreatingDashboard] = useState(false);
 
   useEffect(() => {
+    if (!visible) return;
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [onClose]);
+  }, [onClose, visible]);
 
   const embeddedUrl =
     card.type === "embed"
@@ -2732,7 +2740,7 @@ function DesktopObjectModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-0 backdrop-blur-sm"
+      className={`fixed inset-0 z-50 items-center justify-center bg-black/60 p-0 backdrop-blur-sm ${visible ? "flex" : "hidden"}`}
       onClick={onClose}
     >
       <section
@@ -3030,6 +3038,7 @@ export default function DashboardClient({
   const [themeConfig, setThemeConfig] = useState(defaultThemeConfig);
   const [selectedObjectId, setSelectedObjectId] = useState<string | null>(null);
   const [activeDashboardId, setActiveDashboardId] = useState<string | null>(null);
+  const [openedFrameIds, setOpenedFrameIds] = useState<string[]>([]);
   const [collapsedWidgetIds, setCollapsedWidgetIds] = useState<Set<string>>(
     () => new Set(),
   );
@@ -3182,7 +3191,7 @@ export default function DashboardClient({
 
   const selectDashboard = (id: string) => {
     setActiveDashboardId(id);
-    document.cookie = `${activeDashboardCookie}=${encodeURIComponent(id)}; Path=/; Max-Age=31536000; SameSite=Lax`;
+    writeCookie(activeDashboardCookie, id);
     setSelectedObjectId(null);
     setEditor(null);
     setAddContentSectionId(null);
@@ -3416,7 +3425,7 @@ export default function DashboardClient({
     try {
       const response = await fetch("/api/auth/logout", { method: "POST" });
       if (!response.ok) throw new Error("Sign out failed.");
-      router.replace("/");
+      window.location.replace("/");
     } catch {
       setPageError("Unable to sign out right now. Please try again.");
     }
@@ -3445,17 +3454,14 @@ export default function DashboardClient({
       .map((section) => section.id),
   );
   const activeCards = dashboard.cards.filter((card) => activeSectionIds.has(card.sectionId));
-  const canvasHeight = Math.max(
-    560,
-    ...activeCards.map(
-      (card) =>
-        card.floatY +
-        (isPersistentDashboardWidget(card)
-          ? Math.max(720, card.floatHeight)
-          : 160),
-    ),
+  const selectedObject = dashboard.cards.find((card) => card.id === selectedObjectId) ?? null;
+  const isFrameCard = (card: DashboardCard) =>
+    card.type === "embed" || card.type === "home-assistant-dashboard";
+  const modalCards = dashboard.cards.filter(
+    (card) =>
+      card.id === selectedObject?.id ||
+      (isFrameCard(card) && openedFrameIds.includes(card.id)),
   );
-  const selectedObject = activeCards.find((card) => card.id === selectedObjectId) ?? null;
 
   return (
     <main
@@ -3633,63 +3639,94 @@ export default function DashboardClient({
             </div>
           </section>
         ))}
-      {!(activeDashboard.kind === "iframe" && activeDashboard.iframeUrl) && (
-        <div
-          className={`relative overflow-hidden border border-zinc-300/70 bg-white/40 shadow-inner dark:border-zinc-700 dark:bg-zinc-900/30 ${dashboard.dashboards.length > 1 ? "rounded-b-2xl rounded-t-none" : "rounded-2xl"} ${isEditMode ? "ring-2 ring-indigo-400/50" : ""}`}
-          data-dashboard-canvas
-          style={{
-            minHeight: `max(${canvasHeight}px, calc(100dvh - 11rem))`,
-            backgroundColor: themeConfig.bgColor,
-            backgroundImage:
-              themeConfig.backgroundImage === "none"
-                ? "radial-gradient(circle, rgba(148,163,184,.18) 1px, transparent 1px)"
-                : `radial-gradient(circle, rgba(148,163,184,.18) 1px, transparent 1px), ${themeConfig.backgroundImage}`,
-            backgroundPosition: "center, center",
-            backgroundSize: "22px 22px, cover",
-          }}
-        >
-          {activeCards.length === 0 && (
-            <div className="absolute inset-0 flex items-center justify-center p-6 text-center text-sm text-zinc-500">
-              {isEditMode ? "Add an object to start building your desktop." : "Your desktop is empty. Choose Edit dashboard to add objects."}
+      {dashboard.dashboards
+        .filter((item) => !(item.kind === "iframe" && item.iframeUrl))
+        .map((item) => {
+          const isActive = activeDashboard.id === item.id;
+          const sectionIds = new Set(
+            dashboard.sections
+              .filter((section) => section.dashboardId === item.id)
+              .map((section) => section.id),
+          );
+          const cards = dashboard.cards.filter((card) => sectionIds.has(card.sectionId));
+          const height = Math.max(
+            560,
+            ...cards.map(
+              (card) =>
+                card.floatY +
+                (isPersistentDashboardWidget(card)
+                  ? Math.max(720, card.floatHeight)
+                  : 160),
+            ),
+          );
+          return (
+            <div
+              className={`relative overflow-hidden border border-zinc-300/70 bg-white/40 shadow-inner dark:border-zinc-700 dark:bg-zinc-900/30 ${isActive ? "" : "hidden"} ${dashboard.dashboards.length > 1 ? "rounded-b-2xl rounded-t-none" : "rounded-2xl"} ${isEditMode ? "ring-2 ring-indigo-400/50" : ""}`}
+              data-dashboard-canvas
+              key={item.id}
+              style={{
+                minHeight: `max(${height}px, calc(100dvh - 11rem))`,
+                backgroundColor: themeConfig.bgColor,
+                backgroundImage:
+                  themeConfig.backgroundImage === "none"
+                    ? "radial-gradient(circle, rgba(148,163,184,.18) 1px, transparent 1px)"
+                    : `radial-gradient(circle, rgba(148,163,184,.18) 1px, transparent 1px), ${themeConfig.backgroundImage}`,
+                backgroundPosition: "center, center",
+                backgroundSize: "22px 22px, cover",
+              }}
+            >
+              {cards.length === 0 && (
+                <div className="absolute inset-0 flex items-center justify-center p-6 text-center text-sm text-zinc-500">
+                  {isEditMode ? "Add an object to start building your desktop." : "Your desktop is empty. Choose Edit dashboard to add objects."}
+                </div>
+              )}
+              {cards.map((card) => (
+                <DesktopObject
+                  card={card}
+                  isCollapsed={collapsedWidgetIds.has(card.id)}
+                  homeAssistantBaseUrl={dashboard.homeAssistantBaseUrl}
+                  isEditMode={isEditMode}
+                  key={card.id}
+                  onDelete={() => void deleteCard(card)}
+                  onEdit={() => setEditor(card)}
+                  onToggleCollapsed={() =>
+                    setCollapsedWidgetIds((current) => {
+                      const next = new Set(current);
+                      if (next.has(card.id)) next.delete(card.id);
+                      else next.add(card.id);
+                      return next;
+                    })
+                  }
+                  onMove={(x, y, width, height) =>
+                    void persistObjectPosition(card, x, y, width, height)
+                  }
+                  onOpen={() => {
+                    setSelectedObjectId(card.id);
+                    if (card.type === "embed" || card.type === "home-assistant-dashboard") {
+                      setOpenedFrameIds((current) =>
+                        current.includes(card.id) ? current : [...current, card.id],
+                      );
+                    }
+                  }}
+                  onPreview={(x, y, width, height) =>
+                    previewFloatingCard(card.id, x, y, width, height)
+                  }
+                />
+              ))}
             </div>
-          )}
-          {activeCards.map((card) => (
-            <DesktopObject
-              card={card}
-              isCollapsed={collapsedWidgetIds.has(card.id)}
-              homeAssistantBaseUrl={dashboard.homeAssistantBaseUrl}
-              isEditMode={isEditMode}
-              key={card.id}
-              onDelete={() => void deleteCard(card)}
-              onEdit={() => setEditor(card)}
-              onToggleCollapsed={() =>
-                setCollapsedWidgetIds((current) => {
-                  const next = new Set(current);
-                  if (next.has(card.id)) next.delete(card.id);
-                  else next.add(card.id);
-                  return next;
-                })
-              }
-              onMove={(x, y, width, height) =>
-                void persistObjectPosition(card, x, y, width, height)
-              }
-              onOpen={() => setSelectedObjectId(card.id)}
-              onPreview={(x, y, width, height) =>
-                previewFloatingCard(card.id, x, y, width, height)
-              }
-            />
-          ))}
-        </div>
-      )}
+          );
+        })}
 
-      {selectedObject && !isEditMode && (
+      {modalCards.map((card) => (
         <DesktopObjectModal
-          card={selectedObject}
+          card={card}
           homeAssistantBaseUrl={dashboard.homeAssistantBaseUrl}
+          key={card.id}
           onClose={() => setSelectedObjectId(null)}
-          onOpenAsDashboard={() => openCardAsDashboard(selectedObject)}
+          onOpenAsDashboard={() => openCardAsDashboard(card)}
+          visible={card.id === selectedObject?.id && !isEditMode}
         />
-      )}
+      ))}
 
       {editor && (
         <CardEditorModal

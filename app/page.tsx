@@ -407,6 +407,7 @@ export default function Home() {
       setIsCustomizeOpen(false);
       setIsPositioning(false);
       setDraft(settings);
+      window.location.reload();
     } catch (signOutError) {
       setError(
         signOutError instanceof Error

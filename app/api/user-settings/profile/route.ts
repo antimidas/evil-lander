@@ -1,7 +1,6 @@
 import { getSessionUser } from "@/lib/auth";
 import { getUserProfile, saveUserProfile } from "@/lib/user-settings-data";
 
-export const runtime = "nodejs";
 
 const MAX_REQUEST_BYTES = 3 * 1024 * 1024;
 

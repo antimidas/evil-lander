@@ -6,7 +6,6 @@ import {
   saveUserLandingWidgets,
 } from "@/lib/user-settings-data";
 
-export const runtime = "nodejs";
 
 function isWidgetIds(value: unknown): value is string[] {
   return (

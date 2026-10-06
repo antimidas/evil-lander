@@ -5,7 +5,6 @@ import {
   verifyCredentials,
 } from "@/lib/auth";
 
-export const runtime = "nodejs";
 
 export async function POST(request: Request) {
   const credentials = await readCredentials(request);

@@ -1,7 +1,6 @@
 import { getSessionUser } from "@/lib/auth";
 import { getUserThemeSettings, saveUserThemeSettings } from "@/lib/user-settings-data";
 
-export const runtime = "nodejs";
 
 const MAX_REQUEST_BYTES = 90 * 1024 * 1024;
 

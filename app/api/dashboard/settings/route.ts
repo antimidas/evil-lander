@@ -10,7 +10,6 @@ import {
   readLayout,
 } from "@/lib/dashboard-validation";
 
-export const runtime = "nodejs";
 
 export async function GET() {
   try {

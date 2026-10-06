@@ -5,7 +5,6 @@ import {
   getHomeAssistantCredentials,
 } from "@/lib/dashboard-data";
 
-export const runtime = "nodejs";
 
 type RouteContext = {
   params: Promise<{ id: string }>;

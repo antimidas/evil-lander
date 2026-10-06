@@ -2,7 +2,6 @@ import { getSessionUser } from "@/lib/auth";
 import { deleteCard, updateCard } from "@/lib/dashboard-data";
 import { readCardInput } from "@/lib/dashboard-validation";
 
-export const runtime = "nodejs";
 
 type RouteContext = {
   params: Promise<{ id: string }>;

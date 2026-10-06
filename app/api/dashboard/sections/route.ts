@@ -2,7 +2,6 @@ import { getSessionUser } from "@/lib/auth";
 import { createSection } from "@/lib/dashboard-data";
 import { readSectionTitle } from "@/lib/dashboard-validation";
 
-export const runtime = "nodejs";
 
 export async function POST(request: Request) {
   try {

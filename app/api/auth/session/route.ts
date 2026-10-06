@@ -1,7 +1,6 @@
 import { getSessionUser } from "@/lib/auth";
 import { getUserProfile } from "@/lib/user-settings-data";
 
-export const runtime = "nodejs";
 
 export async function GET() {
   try {

@@ -1,7 +1,6 @@
 import { getSessionUser } from "@/lib/auth";
 import { reorderCards, reorderSections } from "@/lib/dashboard-data";
 
-export const runtime = "nodejs";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

@@ -5,7 +5,6 @@ import {
 } from "@/lib/dashboard-data";
 import { readSectionTitle } from "@/lib/dashboard-validation";
 
-export const runtime = "nodejs";
 
 type RouteContext = {
   params: Promise<{ id: string }>;

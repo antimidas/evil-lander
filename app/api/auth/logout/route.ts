@@ -1,6 +1,5 @@
 import { deleteSession } from "@/lib/auth";
 
-export const runtime = "nodejs";
 
 export async function POST() {
   try {

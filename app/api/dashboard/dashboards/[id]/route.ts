@@ -1,7 +1,6 @@
 import { getSessionUser } from "@/lib/auth";
 import { deleteDashboard, getDashboard } from "@/lib/dashboard-data";
 
-export const runtime = "nodejs";
 
 type RouteContext = {
   params: Promise<{ id: string }>;
