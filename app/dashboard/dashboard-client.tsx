@@ -22,8 +22,14 @@ import type {
 } from "@/lib/dashboard-data";
 import { loadThemeWallpaper } from "@/lib/theme-wallpaper";
 import {
-  defaultThemeConfig,
+  defaultBrandingConfig,
+  isValidBrandingImageDataUrl,
+  isValidBrandingText,
+  MAX_BRANDING_TEXT_LENGTH,
+  parseBrandingConfig,
   parseThemeConfig,
+  defaultThemeConfig,
+  type BrandingConfig,
   type ThemeConfig,
   type UserWallpaper,
 } from "@/lib/theme-settings-shared";
@@ -208,6 +214,33 @@ async function persistThemeSettings(config: ThemeConfig) {
   }
   const saved = parseThemeConfig(result.theme);
   if (!saved) throw new Error("The server returned invalid saved theme settings.");
+  return saved;
+}
+
+async function persistBrandingSettings(config: BrandingConfig) {
+  const response = await fetch("/api/user-settings/branding", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ branding: config }),
+  });
+  const result: unknown = await response.json();
+  if (
+    !response.ok ||
+    typeof result !== "object" ||
+    result === null ||
+    !("branding" in result)
+  ) {
+    throw new Error(
+      typeof result === "object" &&
+        result !== null &&
+        "error" in result &&
+        typeof result.error === "string"
+        ? result.error
+        : "Unable to save this branding.",
+    );
+  }
+  const saved = parseBrandingConfig(result.branding);
+  if (!saved) throw new Error("The server returned invalid saved branding settings.");
   return saved;
 }
 
@@ -488,15 +521,22 @@ function weatherCondition(value: unknown) {
 }
 
 function ThemeCustomizationModal({
+  brandingConfig,
   config,
   onClose,
   onSave,
+  onSaveBranding,
 }: {
+  brandingConfig: BrandingConfig;
   config: ThemeConfig;
   onClose: () => void;
   onSave: (config: ThemeConfig) => Promise<void>;
+  onSaveBranding: (config: BrandingConfig) => Promise<void>;
 }) {
   const [draft, setDraft] = useState(config);
+  const [brandingDraft, setBrandingDraft] = useState(brandingConfig);
+  const [brandingError, setBrandingError] = useState("");
+  const [isSavingBranding, setIsSavingBranding] = useState(false);
   const [wallpaperInput, setWallpaperInput] = useState(
     wallpaperUrlFromBackground(config.backgroundImage),
   );
@@ -549,6 +589,20 @@ function ThemeCustomizationModal({
     }
   };
 
+  const saveBranding = async () => {
+    setIsSavingBranding(true);
+    setBrandingError("");
+    try {
+      await onSaveBranding(brandingDraft);
+    } catch (error) {
+      setBrandingError(
+        error instanceof Error ? error.message : "Unable to save your branding.",
+      );
+    } finally {
+      setIsSavingBranding(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-3 backdrop-blur-md sm:p-6">
       <section
@@ -593,12 +647,23 @@ function ThemeCustomizationModal({
             >
               <div className="absolute inset-0 bg-black/15" />
               <div className="relative flex items-center justify-between gap-2 p-3 text-white sm:p-4">
-                <span
-                  className="text-sm font-black tracking-tight sm:text-lg"
-                  style={{ color: draft.primaryColor }}
-                >
-                  Evil-Lander
-                </span>
+                {brandingDraft.mode === "image" && brandingDraft.imageDataUrl ? (
+                  <Image
+                    alt={brandingDraft.text}
+                    className="h-6 w-auto max-w-[6rem] object-contain sm:h-7"
+                    height={28}
+                    src={brandingDraft.imageDataUrl}
+                    unoptimized
+                    width={96}
+                  />
+                ) : (
+                  <span
+                    className="truncate text-sm font-black tracking-tight sm:text-lg"
+                    style={{ color: draft.primaryColor }}
+                  >
+                    {brandingDraft.text}
+                  </span>
+                )}
                 <span className="flex gap-1.5">
                   {["Home", "Media"].map((label, index) => (
                     <span
@@ -954,6 +1019,160 @@ function ThemeCustomizationModal({
                 Remove wallpaper image
               </button>
             )}
+          </div>
+
+          <div className="mt-5 rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+            <h3 className="text-sm font-semibold text-zinc-900 dark:text-white">Site branding</h3>
+            <p className="mt-1 text-xs text-zinc-500">
+              Replace the &ldquo;Evil-Lander&rdquo; header text with your own text or a logo image.
+            </p>
+            <div className="mt-3 flex gap-2">
+              <button
+                aria-pressed={brandingDraft.mode === "text"}
+                className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${
+                  brandingDraft.mode === "text"
+                    ? "border-indigo-500 bg-indigo-50 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300"
+                    : "border-zinc-300 text-zinc-600 hover:border-zinc-500 dark:border-zinc-600 dark:text-zinc-300"
+                }`}
+                onClick={() => {
+                  setBrandingError("");
+                  setBrandingDraft((current) => ({ ...current, mode: "text" }));
+                }}
+                type="button"
+              >
+                Text
+              </button>
+              <button
+                aria-pressed={brandingDraft.mode === "image"}
+                className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${
+                  brandingDraft.mode === "image"
+                    ? "border-indigo-500 bg-indigo-50 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300"
+                    : "border-zinc-300 text-zinc-600 hover:border-zinc-500 dark:border-zinc-600 dark:text-zinc-300"
+                }`}
+                disabled={!brandingDraft.imageDataUrl}
+                onClick={() => {
+                  setBrandingError("");
+                  setBrandingDraft((current) => ({ ...current, mode: "image" }));
+                }}
+                title={brandingDraft.imageDataUrl ? undefined : "Upload a logo image first"}
+                type="button"
+              >
+                Image
+              </button>
+            </div>
+
+            <label className="mt-3 block text-sm font-medium text-zinc-700 dark:text-zinc-200" htmlFor="branding-text">
+              Header text
+              <input
+                className={`${inputClass} mt-1`}
+                id="branding-text"
+                maxLength={MAX_BRANDING_TEXT_LENGTH}
+                onChange={(event) => {
+                  setBrandingError("");
+                  setBrandingDraft((current) => ({ ...current, text: event.target.value }));
+                }}
+                placeholder="Evil-Lander"
+                value={brandingDraft.text}
+              />
+            </label>
+
+            <div className="mt-3 flex items-center gap-3">
+              {brandingDraft.imageDataUrl && (
+                <span className="flex h-12 w-24 items-center justify-center overflow-hidden rounded-lg border border-zinc-200 bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-800">
+                  <Image
+                    alt="Logo preview"
+                    className="max-h-full max-w-full object-contain"
+                    height={48}
+                    src={brandingDraft.imageDataUrl}
+                    unoptimized
+                    width={96}
+                  />
+                </span>
+              )}
+              <label
+                className="cursor-pointer rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-xs font-medium text-zinc-600 transition hover:border-indigo-400 hover:text-indigo-600 dark:border-zinc-600 dark:text-zinc-300"
+                htmlFor="branding-logo-file"
+              >
+                {brandingDraft.imageDataUrl ? "Replace logo image" : "Upload logo image"}
+              </label>
+              {brandingDraft.imageDataUrl && (
+                <button
+                  className="rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-xs font-medium text-zinc-600 transition hover:border-red-400 hover:text-red-700 dark:border-zinc-700 dark:text-zinc-300 dark:hover:text-red-300"
+                  onClick={() => {
+                    setBrandingError("");
+                    setBrandingDraft((current) => ({
+                      ...current,
+                      mode: "text",
+                      imageDataUrl: null,
+                    }));
+                  }}
+                  type="button"
+                >
+                  Remove logo
+                </button>
+              )}
+            </div>
+            <input
+              accept="image/png,image/jpeg,image/webp,image/gif"
+              className="sr-only"
+              id="branding-logo-file"
+              onChange={(event) => {
+                const file = event.currentTarget.files?.[0];
+                event.currentTarget.value = "";
+                if (!file) return;
+                if (!["image/png", "image/jpeg", "image/webp", "image/gif"].includes(file.type)) {
+                  setBrandingError("Choose a PNG, JPEG, WebP, or GIF logo.");
+                  return;
+                }
+                if (file.size > 4 * 1024 * 1024) {
+                  setBrandingError("Logo images must be 4 MiB or smaller.");
+                  return;
+                }
+                const reader = new FileReader();
+                reader.onload = () => {
+                  if (typeof reader.result !== "string" || !isValidBrandingImageDataUrl(reader.result)) {
+                    setBrandingError("The selected logo could not be read.");
+                    return;
+                  }
+                  setBrandingError("");
+                  setBrandingDraft((current) => ({
+                    ...current,
+                    mode: "image",
+                    imageDataUrl: reader.result as string,
+                  }));
+                };
+                reader.onerror = () => setBrandingError("The selected logo could not be read.");
+                reader.readAsDataURL(file);
+              }}
+              type="file"
+            />
+            <span className="mt-1 block text-xs font-normal text-zinc-500">
+              Logo images up to 4 MiB are saved to your account.
+            </span>
+
+            {brandingError && (
+              <p className="mt-2 text-xs text-red-600" role="alert">
+                {brandingError}
+              </p>
+            )}
+
+            <button
+              className="mt-3 rounded-lg border px-4 py-2 text-sm font-semibold transition hover:bg-transparent disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={
+                isSavingBranding ||
+                !isValidBrandingText(brandingDraft.text) ||
+                (brandingDraft.mode === "image" && !brandingDraft.imageDataUrl)
+              }
+              onClick={() => void saveBranding()}
+              style={{
+                backgroundColor: "transparent",
+                borderColor: draft.primaryColor,
+                color: draft.primaryColor,
+              }}
+              type="button"
+            >
+              {isSavingBranding ? "Saving…" : "Save branding"}
+            </button>
           </div>
         </div>
         <footer className="flex justify-end gap-2 border-t border-zinc-200 px-5 py-4 dark:border-zinc-800 sm:px-7">
@@ -3252,6 +3471,7 @@ export default function DashboardClient({
   const router = useRouter();
   const [profile, setProfile] = useState(initialProfile);
   const [themeConfig, setThemeConfig] = useState(defaultThemeConfig);
+  const [brandingConfig, setBrandingConfig] = useState(defaultBrandingConfig);
   const [selectedObjectId, setSelectedObjectId] = useState<string | null>(null);
   const [activeDashboardId, setActiveDashboardId] = useState<string | null>(null);
   const [openedFrameIds, setOpenedFrameIds] = useState<string[]>([]);
@@ -3275,6 +3495,12 @@ export default function DashboardClient({
     const savedConfig = await persistThemeSettings(config);
     setThemeConfig(savedConfig);
     setNotice("Desktop theme applied.");
+  };
+
+  const saveBrandingConfig = async (config: BrandingConfig) => {
+    const savedConfig = await persistBrandingSettings(config);
+    setBrandingConfig(savedConfig);
+    setNotice("Site branding updated.");
   };
 
   const toggleThemeMode = async () => {
@@ -3361,6 +3587,36 @@ export default function DashboardClient({
     void loadTheme();
     return () => controller.abort();
   }, [user.id]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const loadBranding = async () => {
+      try {
+        const response = await fetch("/api/user-settings/branding", {
+          signal: controller.signal,
+        });
+        const result: unknown = await response.json();
+        if (!response.ok || typeof result !== "object" || result === null || !("branding" in result)) {
+          throw new Error(errorMessage(result, "Unable to load your branding settings."));
+        }
+        if (result.branding !== null) {
+          const savedBranding = parseBrandingConfig(result.branding);
+          if (!savedBranding) throw new Error("The server returned invalid branding settings.");
+          setBrandingConfig(savedBranding);
+        }
+      } catch (loadError) {
+        if (!controller.signal.aborted) {
+          setPageError(
+            loadError instanceof Error
+              ? loadError.message
+              : "Unable to load your branding settings.",
+          );
+        }
+      }
+    };
+    void loadBranding();
+    return () => controller.abort();
+  }, []);
 
   const loadDashboard = useCallback(async () => {
     setPageError("");
@@ -3692,9 +3948,20 @@ export default function DashboardClient({
     >
       <header className="mb-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-xl border border-zinc-200/80 bg-white/70 px-3 py-2 shadow-sm backdrop-blur-md dark:border-zinc-700/80 dark:bg-zinc-950/75">
         <div className="flex min-w-0 items-center gap-3">
-          <h1 className="shrink-0 text-xl font-black tracking-tight sm:text-2xl" style={{ color: themeConfig.primaryColor }}>
-            Evil-Lander
-          </h1>
+          {brandingConfig.mode === "image" && brandingConfig.imageDataUrl ? (
+            <Image
+              alt={brandingConfig.text}
+              className="h-8 w-auto max-w-[10rem] shrink-0 object-contain sm:h-9"
+              height={36}
+              src={brandingConfig.imageDataUrl}
+              unoptimized
+              width={160}
+            />
+          ) : (
+            <h1 className="shrink-0 text-xl font-black tracking-tight sm:text-2xl" style={{ color: themeConfig.primaryColor }}>
+              {brandingConfig.text}
+            </h1>
+          )}
           <span className="hidden h-6 w-px bg-zinc-300 dark:bg-zinc-700 sm:block" />
           <div className="flex min-w-0 items-center gap-2 text-xs text-zinc-600 dark:text-zinc-300">
             <Image
@@ -3960,9 +4227,11 @@ export default function DashboardClient({
       )}
       {isThemeOpen && (
         <ThemeCustomizationModal
+          brandingConfig={brandingConfig}
           config={themeConfig}
           onClose={() => setIsThemeOpen(false)}
           onSave={saveThemeConfig}
+          onSaveBranding={saveBrandingConfig}
         />
       )}
       {isSettingsOpen && (

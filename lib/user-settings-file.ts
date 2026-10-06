@@ -3,7 +3,9 @@ import { join } from "node:path";
 import type { LandingPageSettings } from "@/lib/landing-page-shared";
 import {
   isValidUserWallpaperList,
+  parseBrandingConfig,
   parseThemeConfig,
+  type BrandingConfig,
   type ThemeConfig,
   type UserWallpaper,
 } from "@/lib/theme-settings-shared";
@@ -16,6 +18,7 @@ export type UserSettingsFile = {
     string,
     {
       theme?: ThemeConfig;
+      branding?: BrandingConfig;
       wallpapers?: UserWallpaper[];
       landingWidgetIds?: string[];
       landingWidgetPositions?: Record<string, { x: number; y: number }>;
@@ -81,6 +84,12 @@ export function readUserSettingsFile(): UserSettingsFile | null {
       !parseThemeConfig(value.theme)
     ) {
       throw new Error(`The user settings file contains an invalid theme for ${userId}.`);
+    }
+    if (
+      "branding" in value &&
+      !parseBrandingConfig(value.branding)
+    ) {
+      throw new Error(`The user settings file contains invalid branding for ${userId}.`);
     }
     if (
       "wallpapers" in value &&

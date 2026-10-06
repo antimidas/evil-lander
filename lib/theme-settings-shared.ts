@@ -177,3 +177,86 @@ export function isValidUserWallpaperList(value: unknown): value is UserWallpaper
   }
   return ids.size === value.length;
 }
+
+export type BrandingConfig = {
+  mode: "text" | "image";
+  text: string;
+  imageDataUrl: string | null;
+};
+
+export const defaultBrandingConfig: BrandingConfig = {
+  mode: "text",
+  text: "Evil-Lander",
+  imageDataUrl: null,
+};
+
+export const MAX_BRANDING_TEXT_LENGTH = 40;
+export const MAX_BRANDING_IMAGE_BYTES = 4 * 1024 * 1024;
+
+export function isValidBrandingText(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.trim().length > 0 &&
+    value.length <= MAX_BRANDING_TEXT_LENGTH &&
+    value.trim() === value &&
+    !/[\u0000-\u001f\u007f]/.test(value)
+  );
+}
+
+export function isValidBrandingImageDataUrl(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const match =
+    /^data:image\/(png|jpeg|webp|gif);base64,([A-Za-z0-9+/]+={0,2})$/.exec(
+      value,
+    );
+  if (!match || match[2].length % 4 !== 0) return false;
+
+  const bytes = Buffer.from(match[2], "base64");
+  if (bytes.length === 0 || bytes.length > MAX_BRANDING_IMAGE_BYTES) return false;
+  if (bytes.toString("base64") !== match[2]) return false;
+
+  switch (match[1]) {
+    case "png":
+      return bytes.subarray(0, 8).equals(
+        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      );
+    case "jpeg":
+      return bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+    case "gif":
+      return (
+        bytes.subarray(0, 6).toString("ascii") === "GIF87a" ||
+        bytes.subarray(0, 6).toString("ascii") === "GIF89a"
+      );
+    case "webp":
+      return (
+        bytes.subarray(0, 4).toString("ascii") === "RIFF" &&
+        bytes.subarray(8, 12).toString("ascii") === "WEBP"
+      );
+    default:
+      return false;
+  }
+}
+
+export function parseBrandingConfig(value: unknown): BrandingConfig | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  if (
+    !("mode" in value) ||
+    (value.mode !== "text" && value.mode !== "image")
+  ) {
+    return null;
+  }
+  if (!("text" in value) || !isValidBrandingText(value.text)) return null;
+  if (
+    !("imageDataUrl" in value) ||
+    (value.imageDataUrl !== null && !isValidBrandingImageDataUrl(value.imageDataUrl))
+  ) {
+    return null;
+  }
+  if (value.mode === "image" && !value.imageDataUrl) return null;
+
+  return {
+    mode: value.mode,
+    text: value.text,
+    imageDataUrl: value.imageDataUrl,
+  };
+}

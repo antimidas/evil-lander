@@ -3,6 +3,7 @@ import { getLandingPageSettings } from "@/lib/landing-page-data";
 import {
   isValidWallpaperImageDataUrl,
   MAX_WALLPAPERS_PER_USER,
+  parseBrandingConfig,
   parseThemeConfig,
   type UserWallpaper,
 } from "@/lib/theme-settings-shared";
@@ -37,6 +38,37 @@ export function saveUserThemeSettings(userId: string, value: unknown) {
         [userId]: {
           ...file.users[userId],
           theme,
+        },
+      },
+    }),
+    landingPage,
+  );
+  return true;
+}
+
+export function getUserBranding(userId: string) {
+  getLandingPageSettings();
+  const file = readUserSettingsFile();
+  if (!file) throw new Error("The user settings file could not be initialized.");
+  const branding = file.users[userId]?.branding;
+  if (!branding) return null;
+  const parsed = parseBrandingConfig(branding);
+  if (!parsed) throw new Error(`Invalid branding settings for user ${userId}.`);
+  return parsed;
+}
+
+export function saveUserBranding(userId: string, value: unknown) {
+  const branding = parseBrandingConfig(value);
+  if (!branding) return false;
+  const landingPage = getLandingPageSettings();
+  updateUserSettingsFile(
+    (file) => ({
+      ...file,
+      users: {
+        ...file.users,
+        [userId]: {
+          ...file.users[userId],
+          branding,
         },
       },
     }),
