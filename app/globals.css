@@ -21,8 +21,75 @@
 
 body {
   background: var(--background);
-  color: var(--foreground);
+  color: color-mix(in srgb, var(--dashboard-ink) 82%, var(--dashboard-accent) 18%);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+.dashboard-folder-tabs {
+  position: relative;
+  z-index: 2;
+  gap: 0.15rem;
+  min-height: 2.75rem;
+  padding: 0.3rem 0.45rem 0;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--dashboard-accent) 38%, transparent) transparent;
+  border: 1px solid color-mix(in srgb, var(--dashboard-accent) 35%, var(--dashboard-surface));
+  border-bottom: 0;
+  border-radius: 0.85rem 0.85rem 0 0;
+  background: color-mix(in srgb, var(--dashboard-surface) 82%, var(--dashboard-accent) 18%);
+  backdrop-filter: blur(14px);
+}
+
+.dashboard-folder-tab {
+  position: relative;
+  height: 2.25rem;
+  margin-top: 0.2rem;
+  border: 1px solid color-mix(in srgb, var(--dashboard-accent) 24%, var(--dashboard-surface));
+  border-bottom: 0;
+  border-radius: 0.55rem 0.55rem 0 0;
+  background: color-mix(in srgb, var(--dashboard-surface) 90%, var(--dashboard-accent) 10%);
+  color: var(--foreground);
+  box-shadow: inset 0 1px rgb(255 255 255 / 8%);
+  transition:
+    background-color 140ms ease,
+    color 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.dashboard-folder-tab:hover {
+  z-index: 2;
+  background: color-mix(in srgb, var(--dashboard-surface) 82%, var(--dashboard-accent) 18%);
+}
+
+.dashboard-folder-tab[aria-current="page"] {
+  z-index: 3;
+  height: 2.45rem;
+  margin-top: 0;
+  border-color: color-mix(in srgb, var(--dashboard-accent) 44%, var(--dashboard-surface));
+  background: var(--dashboard-surface);
+  color: var(--dashboard-accent);
+  box-shadow:
+    inset 0 2px var(--dashboard-accent),
+    0 -2px 8px rgb(15 23 42 / 12%);
+}
+
+.dashboard-folder-tabs[data-theme="dark"] .dashboard-folder-tab[aria-current="page"] {
+  color: color-mix(in srgb, var(--dashboard-ink) 76%, var(--dashboard-accent) 24%);
+}
+
+.dashboard-folder-close {
+  color: color-mix(in srgb, currentColor 72%, transparent);
+}
+
+.dashboard-folder-close:hover {
+  color: #ef4444;
+  background: color-mix(in srgb, var(--dashboard-accent) 12%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dashboard-folder-tab {
+    transition: none;
+  }
 }
 
 @keyframes dashboard-object-launch {

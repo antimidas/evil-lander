@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type ChangeEvent, type FormEvent, type PointerEvent } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type ChangeEvent, type CSSProperties, type FormEvent, type PointerEvent } from "react";
 import Image from "next/image";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -1793,6 +1793,15 @@ export function DashboardCardContent({
   return null;
 }
 
+const activeDashboardCookie = "lander_active_dashboard";
+
+function readCookie(name: string) {
+  const match = document.cookie
+    .split("; ")
+    .find((entry) => entry.startsWith(`${name}=`));
+  return match ? decodeURIComponent(match.slice(name.length + 1)) : null;
+}
+
 function WebsiteEmbed({ url, title }: { url: string; title: string }) {
   const pageOrigin = useSyncExternalStore(
     () => () => {},
@@ -2820,7 +2829,15 @@ function UserProfileModal({
     const file = event.currentTarget.files?.[0];
     event.currentTarget.value = "";
     if (!file) return;
-    if (!["image/png", "image/jpeg", "image/webp", "image/gif"].includes(file.type)) {
+    const isJpeg =
+      file.type === "image/jpeg" ||
+      file.type === "image/jpg" ||
+      ((!file.type || file.type === "application/octet-stream") &&
+        /\.jpe?g$/i.test(file.name));
+    if (
+      !isJpeg &&
+      !["image/png", "image/webp", "image/gif"].includes(file.type)
+    ) {
       setError("Choose a PNG, JPEG, WebP, or GIF image.");
       return;
     }
@@ -2837,7 +2854,11 @@ function UserProfileModal({
         setError("Unable to read the selected image.");
         return;
       }
-      setAvatar(reader.result);
+      setAvatar(
+        isJpeg
+          ? reader.result.replace(/^data:[^;,]+;base64,/, "data:image/jpeg;base64,")
+          : reader.result,
+      );
     };
     reader.readAsDataURL(file);
   };
@@ -2960,7 +2981,7 @@ function UserProfileModal({
               width={56}
             />
             <input
-              accept="image/png,image/jpeg,image/webp,image/gif"
+              accept=".jpg,.jpeg,.png,.webp,.gif,image/jpeg,image/png,image/webp,image/gif"
               className="sr-only"
               onChange={handleImageChange}
               ref={fileInputRef}
@@ -2973,7 +2994,7 @@ function UserProfileModal({
             >
               Upload image
             </button>
-            <span className="text-xs text-zinc-500">PNG, JPEG, WebP, or GIF; up to 2 MiB</span>
+            <span className="text-xs text-zinc-500">JPG/JPEG, PNG, WebP, or GIF; up to 2 MiB</span>
           </div>
           <div className="flex justify-end gap-2 border-t border-zinc-200 pt-4 dark:border-zinc-700">
             <button
@@ -3140,6 +3161,10 @@ export default function DashboardClient({
       })
       .then((result) => {
         setDashboard(result);
+        const savedId = readCookie(activeDashboardCookie);
+        if (savedId && result.dashboards.some((item) => item.id === savedId)) {
+          setActiveDashboardId(savedId);
+        }
         setPageError("");
       })
       .catch((loadError: unknown) => {
@@ -3155,42 +3180,9 @@ export default function DashboardClient({
     return () => controller.abort();
   }, [loadDashboard]);
 
-  useEffect(() => {
-    const timeoutMs = 60_000;
-    let lastActivity = Date.now();
-    let timeout: number;
-    const goToLandingPage = () => router.replace("/");
-    const resetInactivityTimer = () => {
-      lastActivity = Date.now();
-      window.clearTimeout(timeout);
-      timeout = window.setTimeout(goToLandingPage, timeoutMs);
-    };
-    const checkInactivity = () => {
-      const remaining = timeoutMs - (Date.now() - lastActivity);
-      if (remaining <= 0) {
-        goToLandingPage();
-      } else {
-        window.clearTimeout(timeout);
-        timeout = window.setTimeout(goToLandingPage, remaining);
-      }
-    };
-    const activityEvents = ["pointerdown", "pointermove", "keydown", "touchstart", "wheel"];
-    activityEvents.forEach((eventName) =>
-      window.addEventListener(eventName, resetInactivityTimer, { passive: true }),
-    );
-    document.addEventListener("visibilitychange", checkInactivity);
-    timeout = window.setTimeout(goToLandingPage, timeoutMs);
-    return () => {
-      window.clearTimeout(timeout);
-      activityEvents.forEach((eventName) =>
-        window.removeEventListener(eventName, resetInactivityTimer),
-      );
-      document.removeEventListener("visibilitychange", checkInactivity);
-    };
-  }, [router]);
-
   const selectDashboard = (id: string) => {
     setActiveDashboardId(id);
+    document.cookie = `${activeDashboardCookie}=${encodeURIComponent(id)}; Path=/; Max-Age=31536000; SameSite=Lax`;
     setSelectedObjectId(null);
     setEditor(null);
     setAddContentSectionId(null);
@@ -3496,6 +3488,13 @@ export default function DashboardClient({
             <span className="max-w-[10rem] truncate font-semibold text-zinc-900 dark:text-zinc-100">
               {profile.displayName}
             </span>
+            <button
+              className="shrink-0 rounded-lg border border-indigo-400/70 bg-transparent px-2.5 py-1.5 text-xs font-semibold text-indigo-700 transition hover:border-indigo-600 hover:text-indigo-900 dark:border-indigo-500/50 dark:text-indigo-200 dark:hover:border-indigo-300 dark:hover:text-white"
+              onClick={() => setIsProfileOpen(true)}
+              type="button"
+            >
+              Edit profile
+            </button>
             {user.role === "admin" && (
               <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">
                 Admin
@@ -3503,45 +3502,6 @@ export default function DashboardClient({
             )}
           </div>
         </div>
-        {dashboard.dashboards.length > 1 && (
-          <nav
-            aria-label="Dashboards"
-            className="order-3 flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto px-1 sm:order-none sm:justify-center"
-          >
-            {dashboard.dashboards.map((item) => (
-              <div
-                className={`flex shrink-0 items-center rounded-full border transition ${
-                  activeDashboard.id === item.id
-                    ? "border-indigo-500 bg-transparent text-indigo-700 dark:text-indigo-200"
-                    : "border-zinc-300 bg-transparent text-zinc-600 hover:border-indigo-400 hover:text-indigo-700 dark:border-zinc-700 dark:text-zinc-300 dark:hover:border-indigo-600 dark:hover:text-indigo-200"
-                }`}
-                key={item.id}
-              >
-                <button
-                  aria-current={activeDashboard.id === item.id ? "page" : undefined}
-                  className="py-1.5 pl-3.5 pr-1.5 text-xs font-semibold"
-                  onClick={() => selectDashboard(item.id)}
-                  type="button"
-                >
-                  {item.title}
-                </button>
-                <button
-                  aria-label={`Close ${item.title} dashboard`}
-                  className={`mr-1 rounded-full p-1 text-sm leading-none transition ${
-                    activeDashboard.id === item.id
-                      ? "text-indigo-500 hover:text-red-600 dark:text-indigo-300 dark:hover:text-red-300"
-                      : "text-zinc-400 hover:text-red-700 dark:hover:text-red-300"
-                  }`}
-                  onClick={() => void closeDashboard(item)}
-                  title={`Close ${item.title}`}
-                  type="button"
-                >
-                  ×
-                </button>
-              </div>
-            ))}
-          </nav>
-        )}
         <div className="flex flex-wrap items-center gap-1.5">
           <button
             className="rounded-lg border border-indigo-400/70 bg-transparent px-2.5 py-1.5 text-xs font-semibold text-indigo-700 transition hover:border-indigo-600 hover:text-indigo-900 dark:border-indigo-500/50 dark:text-indigo-200 dark:hover:border-indigo-300 dark:hover:text-white"
@@ -3606,13 +3566,6 @@ export default function DashboardClient({
               Edit landing page
             </button>
           )}
-          <button
-            className="rounded-lg border border-zinc-300 bg-transparent px-2.5 py-1.5 text-xs font-medium transition hover:border-indigo-500 hover:text-indigo-700 dark:border-zinc-600 dark:hover:border-indigo-400 dark:hover:text-indigo-200"
-            onClick={() => setIsProfileOpen(true)}
-            type="button"
-          >
-            Profile
-          </button>
           <button className="rounded-lg border border-zinc-300 bg-transparent px-2.5 py-1.5 text-xs font-medium transition hover:border-red-500 hover:text-red-700 dark:border-zinc-600 dark:hover:border-red-400 dark:hover:text-red-300" onClick={() => void handleLogout()} type="button">
             Log out
           </button>
@@ -3627,15 +3580,62 @@ export default function DashboardClient({
       {pageError && <p className="mb-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/50 dark:text-red-300" role="alert">{pageError}</p>}
       {notice && <p className="fixed bottom-4 right-4 z-40 max-w-[min(24rem,calc(100vw-2rem))] rounded-xl border border-emerald-300/60 bg-zinc-950/90 px-4 py-2.5 text-xs font-medium text-emerald-200 shadow-xl backdrop-blur" role="status">{notice}</p>}
 
-      {activeDashboard.kind === "iframe" && activeDashboard.iframeUrl ? (
-        <section aria-label={activeDashboard.title} className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-zinc-300 bg-white shadow dark:border-zinc-700">
-          <div className="relative min-h-0 flex-1">
-            <WebsiteEmbed title={activeDashboard.title} url={activeDashboard.iframeUrl} />
-          </div>
-        </section>
-      ) : (
+      {dashboard.dashboards.length > 1 && (
+        <nav
+          aria-label="Dashboards"
+          className="dashboard-folder-tabs flex min-w-0 items-end overflow-x-auto"
+          data-theme={theme}
+          style={
+            {
+              "--dashboard-surface": themeConfig.bgColor,
+              "--dashboard-accent": themeConfig.primaryColor,
+              "--dashboard-ink": theme === "dark" ? "#e2e8f0" : "#334155",
+            } as CSSProperties
+          }
+        >
+          {dashboard.dashboards.map((item) => (
+            <div
+              aria-current={activeDashboard.id === item.id ? "page" : undefined}
+              className="dashboard-folder-tab flex shrink-0 items-center"
+              key={item.id}
+            >
+              <button
+                className="dashboard-folder-title max-w-36 truncate py-2 pl-3 pr-1 text-xs font-semibold"
+                onClick={() => selectDashboard(item.id)}
+                type="button"
+              >
+                {item.title}
+              </button>
+              <button
+                aria-label={`Close ${item.title} dashboard`}
+                className="dashboard-folder-close mr-1 rounded-full p-1 text-sm leading-none transition"
+                onClick={() => void closeDashboard(item)}
+                title={`Close ${item.title}`}
+                type="button"
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </nav>
+      )}
+
+      {dashboard.dashboards
+        .filter((item) => item.kind === "iframe" && item.iframeUrl)
+        .map((item) => (
+          <section
+            aria-label={item.title}
+            className={`min-h-0 flex-1 flex-col overflow-hidden border border-zinc-300 bg-white shadow dark:border-zinc-700 ${activeDashboard.id === item.id ? "flex" : "hidden"} ${dashboard.dashboards.length > 1 ? "rounded-b-2xl rounded-t-none" : "rounded-xl"}`}
+            key={item.id}
+          >
+            <div className="relative min-h-0 flex-1">
+              <WebsiteEmbed title={item.title} url={item.iframeUrl ?? ""} />
+            </div>
+          </section>
+        ))}
+      {!(activeDashboard.kind === "iframe" && activeDashboard.iframeUrl) && (
         <div
-          className={`relative overflow-hidden rounded-2xl border border-zinc-300/70 bg-white/40 shadow-inner dark:border-zinc-700 dark:bg-zinc-900/30 ${isEditMode ? "ring-2 ring-indigo-400/50" : ""}`}
+          className={`relative overflow-hidden border border-zinc-300/70 bg-white/40 shadow-inner dark:border-zinc-700 dark:bg-zinc-900/30 ${dashboard.dashboards.length > 1 ? "rounded-b-2xl rounded-t-none" : "rounded-2xl"} ${isEditMode ? "ring-2 ring-indigo-400/50" : ""}`}
           data-dashboard-canvas
           style={{
             minHeight: `max(${canvasHeight}px, calc(100dvh - 11rem))`,
