@@ -1,0 +1,194 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+SOURCE=${BASH_SOURCE[0]}
+while [[ -L "$SOURCE" ]]; do
+  SOURCE_DIR=$(cd -P -- "$(dirname -- "$SOURCE")" && pwd)
+  LINK_TARGET=$(readlink -- "$SOURCE")
+  if [[ "$LINK_TARGET" = /* ]]; then
+    SOURCE=$LINK_TARGET
+  else
+    SOURCE=$SOURCE_DIR/$LINK_TARGET
+  fi
+done
+PROJECT_ROOT=$(cd -P -- "$(dirname -- "$SOURCE")" && pwd)
+SERVICE_NAME=lander-dashboard.service
+SERVICE_TEMPLATE=$PROJECT_ROOT/systemd/dashboard.service.in
+SERVICE_DIRECTORY=${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user
+SERVICE_FILE=$SERVICE_DIRECTORY/$SERVICE_NAME
+COMMAND_LINK=
+
+fail() {
+  printf 'dashboard: %s\n' "$*" >&2
+  exit 1
+}
+
+require_user_systemd() {
+  command -v systemctl >/dev/null 2>&1 || fail "systemctl is required for this command."
+  systemctl --user show-environment >/dev/null 2>&1 ||
+    fail "The user systemd service manager is unavailable in this session."
+}
+
+escape_sed_replacement() {
+  local value=$1
+  value=${value//\\/\\\\}
+  value=${value//&/\\&}
+  value=${value//|/\\|}
+  printf '%s' "$value"
+}
+
+build_app() {
+  command -v pnpm >/dev/null 2>&1 || fail "pnpm is required to build the dashboard."
+  printf 'Building the production dashboard...\n'
+  (cd "$PROJECT_ROOT" && pnpm build)
+}
+
+select_command_link() {
+  local directory
+  for directory in "$HOME/.local/bin" "$HOME/.local/share/pnpm/bin" "$HOME/bin"; do
+    if [[ ":$PATH:" == *":$directory:"* && -d "$directory" && -w "$directory" ]]; then
+      COMMAND_LINK=$directory/dashboard
+      return
+    fi
+  done
+
+  COMMAND_LINK=$HOME/.local/bin/dashboard
+}
+
+install_service() {
+  require_user_systemd
+  [[ -f "$SERVICE_TEMPLATE" ]] || fail "Service template is missing: $SERVICE_TEMPLATE"
+  select_command_link
+
+  if [[ -e "$COMMAND_LINK" && ! -L "$COMMAND_LINK" ]]; then
+    fail "$COMMAND_LINK already exists and is not a symlink; move it before installing."
+  fi
+  if [[ -L "$COMMAND_LINK" && "$(readlink -- "$COMMAND_LINK")" != "$PROJECT_ROOT/dashboard" ]]; then
+    fail "$COMMAND_LINK points to a different command; remove it before installing."
+  fi
+
+  mkdir -p -- "$HOME/.local/bin" "$SERVICE_DIRECTORY"
+  ln -sfn -- "$PROJECT_ROOT/dashboard" "$COMMAND_LINK"
+
+  local escaped_root escaped_dashboard
+  escaped_root=$(escape_sed_replacement "$PROJECT_ROOT")
+  escaped_dashboard=$(escape_sed_replacement "$PROJECT_ROOT/dashboard")
+  sed \
+    -e "s|@PROJECT_ROOT@|$escaped_root|g" \
+    -e "s|@DASHBOARD_EXECUTABLE@|$escaped_dashboard|g" \
+    "$SERVICE_TEMPLATE" > "$SERVICE_FILE"
+
+  systemctl --user daemon-reload
+  systemctl --user enable "$SERVICE_NAME"
+  printf 'Installed %s and enabled it for your user systemd session.\n' "$SERVICE_NAME"
+  printf 'Run `dashboard start` to build and start it now.\n'
+  if [[ ":$PATH:" != *":$(dirname -- "$COMMAND_LINK"):"* ]]; then
+    printf 'Add %s to PATH to use `dashboard` without its full path.\n' \
+      "$(dirname -- "$COMMAND_LINK")"
+  fi
+}
+
+start_service() {
+  require_user_systemd
+  systemctl --user cat "$SERVICE_NAME" >/dev/null 2>&1 ||
+    fail "Service is not installed. Run: $PROJECT_ROOT/dashboard install"
+
+  if systemctl --user is-active --quiet "$SERVICE_NAME"; then
+    printf 'Dashboard is already running at http://localhost:3000\n'
+    return
+  fi
+
+  if command -v ss >/dev/null 2>&1 &&
+    ss -ltnH 'sport = :3000' | grep -q .; then
+    fail "Port 3000 is already in use. Stop the other service before starting the dashboard."
+  fi
+
+  build_app
+  systemctl --user start "$SERVICE_NAME"
+  systemctl --user is-active --quiet "$SERVICE_NAME" ||
+    fail "The dashboard service did not start. Check with: dashboard logs"
+  printf 'Dashboard is running at http://localhost:3000\n'
+}
+
+serve() {
+  [[ -f "$PROJECT_ROOT/node_modules/next/dist/bin/next" ]] ||
+    fail "Next.js dependencies are missing. Run pnpm install in $PROJECT_ROOT."
+  [[ -f "$PROJECT_ROOT/.next/BUILD_ID" ]] ||
+    fail "No production build found. Run `dashboard start` to build the app."
+
+  command -v node >/dev/null 2>&1 || fail "Node.js is not available on the service PATH."
+  export NODE_ENV=production
+  export NEXT_TELEMETRY_DISABLED=1
+  exec node "$PROJECT_ROOT/node_modules/next/dist/bin/next" start \
+    --hostname "${HOST:-0.0.0.0}" \
+    --port "${PORT:-3000}"
+}
+
+usage() {
+  cat <<'EOF'
+Usage: dashboard <command>
+
+Commands:
+  install    Install and enable the user systemd service
+  start      Build and start the production dashboard
+  stop       Stop the dashboard service
+  restart    Rebuild and restart the dashboard service
+  status     Show the dashboard service status
+  logs       Show recent dashboard service logs
+  serve      Start Next.js directly (used by systemd)
+  uninstall  Stop and remove the user systemd service and command link
+EOF
+}
+
+case "${1:-}" in
+  install)
+    install_service
+    ;;
+  start)
+    start_service
+    ;;
+  stop)
+    require_user_systemd
+    systemctl --user stop "$SERVICE_NAME"
+    ;;
+  restart)
+    require_user_systemd
+    build_app
+    systemctl --user restart "$SERVICE_NAME"
+    ;;
+  status)
+    require_user_systemd
+    systemctl --user status --no-pager "$SERVICE_NAME"
+    ;;
+  logs)
+    require_user_systemd
+    journalctl --user -u "$SERVICE_NAME" -n 100 --no-pager
+    ;;
+  serve)
+    serve
+    ;;
+  uninstall)
+    require_user_systemd
+    if [[ -f "$SERVICE_FILE" ]]; then
+      systemctl --user disable --now "$SERVICE_NAME"
+    fi
+    rm -f -- "$SERVICE_FILE"
+    systemctl --user daemon-reload
+    for COMMAND_LINK in \
+      "$HOME/.local/bin/dashboard" \
+      "$HOME/.local/share/pnpm/bin/dashboard" \
+      "$HOME/bin/dashboard"; do
+      if [[ -L "$COMMAND_LINK" && "$(readlink -- "$COMMAND_LINK")" == "$PROJECT_ROOT/dashboard" ]]; then
+        rm -- "$COMMAND_LINK"
+      fi
+    done
+    printf 'Removed the dashboard user service and command link.\n'
+    ;;
+  -h|--help|help)
+    usage
+    ;;
+  *)
+    usage >&2
+    exit 2
+    ;;
+esac
