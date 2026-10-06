@@ -4,11 +4,24 @@ import React, { useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import {
+  DashboardCardContent,
+} from "@/app/dashboard/dashboard-client";
+import type { DashboardCard } from "@/lib/dashboard-data";
+import {
   defaultLandingPageSettings,
   type LandingPageSettings,
 } from "@/lib/landing-page-shared";
 
 type AuthMode = "login" | "signup";
+type SessionUser = { id: string; email: string; role: "admin" | "user" };
+type LandingWidgetPosition = { x: number; y: number };
+
+function defaultLandingWidgetPosition(index: number): LandingWidgetPosition {
+  return {
+    x: 12 + (index % 4) * 25,
+    y: Math.min(94, 64 + Math.floor(index / 4) * 17),
+  };
+}
 
 function LoginModal({
   onClose,
@@ -156,13 +169,28 @@ export default function Home() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isCustomizeOpen, setIsCustomizeOpen] = useState(false);
   const [isPositioning, setIsPositioning] = useState(false);
-  const [isAdmin, setIsAdmin] = useState(false);
+  const [isWidgetPositioning, setIsWidgetPositioning] = useState(false);
+  const [isWidgetModalOpen, setIsWidgetModalOpen] = useState(false);
+  const [sessionUser, setSessionUser] = useState<SessionUser | null>(null);
   const [settings, setSettings] = useState(defaultLandingPageSettings);
   const [draft, setDraft] = useState(defaultLandingPageSettings);
+  const [landingWidgetIds, setLandingWidgetIds] = useState<string[]>([]);
+  const [widgetDraftIds, setWidgetDraftIds] = useState<string[]>([]);
+  const [landingWidgetPositions, setLandingWidgetPositions] = useState<
+    Record<string, LandingWidgetPosition>
+  >({});
+  const [widgetDraftPositions, setWidgetDraftPositions] = useState<
+    Record<string, LandingWidgetPosition>
+  >({});
+  const [availableWidgets, setAvailableWidgets] = useState<DashboardCard[]>([]);
+  const [homeAssistantBaseUrl, setHomeAssistantBaseUrl] = useState("");
   const [error, setError] = useState("");
+  const [settingsTab, setSettingsTab] = useState<"background" | "elements">(
+    "background",
+  );
   const mainRef = useRef<HTMLElement>(null);
   const dragRef = useRef<{
-    item: "logo" | "welcome";
+    item: "logo" | "welcome" | `image:${string}` | `widget:${string}`;
     pointerId: number;
     pointerX: number;
     pointerY: number;
@@ -172,7 +200,7 @@ export default function Home() {
 
   useEffect(() => {
     const controller = new AbortController();
-    const loadSettings = async () => {
+    const loadSettings = async (): Promise<LandingPageSettings | null> => {
       try {
         const response = await fetch("/api/landing-page", {
           signal: controller.signal,
@@ -194,6 +222,7 @@ export default function Home() {
         const config = result as LandingPageSettings;
         setSettings(config);
         setDraft(config);
+        return config;
       } catch (loadError) {
         if (!controller.signal.aborted) {
           setError(
@@ -202,8 +231,10 @@ export default function Home() {
               : "Unable to load landing page customization.",
           );
         }
+        return null;
       }
     };
+    const landingSettingsPromise = loadSettings();
     const loadSession = async () => {
       try {
         const response = await fetch("/api/auth/session", {
@@ -211,15 +242,88 @@ export default function Home() {
         });
         const result: unknown = await response.json();
         if (!response.ok) throw new Error("Unable to check landing page permissions.");
-        setIsAdmin(
-          typeof result === "object" &&
-            result !== null &&
-            "user" in result &&
-            typeof result.user === "object" &&
-            result.user !== null &&
-            "role" in result.user &&
-            result.user.role === "admin",
-        );
+        if (
+          typeof result !== "object" ||
+          result === null ||
+          !("user" in result) ||
+          typeof result.user !== "object" ||
+          result.user === null ||
+          !("id" in result.user) ||
+          typeof result.user.id !== "string" ||
+          !("email" in result.user) ||
+          typeof result.user.email !== "string" ||
+          !("role" in result.user) ||
+          (result.user.role !== "admin" && result.user.role !== "user")
+        ) {
+          setSessionUser(null);
+          return;
+        }
+        setSessionUser({
+          id: result.user.id,
+          email: result.user.email,
+          role: result.user.role,
+        });
+        if (
+          result.user.role === "admin" &&
+          new URLSearchParams(window.location.search).get("editLanding") === "1"
+        ) {
+          const config = await landingSettingsPromise;
+          if (config) {
+            window.history.replaceState(null, "", window.location.pathname);
+            setDraft(config);
+            setSettingsTab("background");
+            setIsCustomizeOpen(true);
+          }
+        }
+        const [widgetsResponse, dashboardResponse] = await Promise.all([
+          fetch("/api/user-settings/landing-widgets", {
+            signal: controller.signal,
+          }),
+          fetch("/api/dashboard", { signal: controller.signal }),
+        ]);
+        const [widgetsResult, dashboardResult]: [unknown, unknown] =
+          await Promise.all([widgetsResponse.json(), dashboardResponse.json()]);
+        if (!widgetsResponse.ok || !dashboardResponse.ok) {
+          throw new Error("Unable to load your private landing page widgets.");
+        }
+        if (
+          typeof widgetsResult !== "object" ||
+          widgetsResult === null ||
+          !("widgetIds" in widgetsResult) ||
+          !Array.isArray(widgetsResult.widgetIds) ||
+          !widgetsResult.widgetIds.every((id) => typeof id === "string") ||
+          !("positions" in widgetsResult) ||
+          typeof widgetsResult.positions !== "object" ||
+          widgetsResult.positions === null ||
+          Array.isArray(widgetsResult.positions) ||
+          typeof dashboardResult !== "object" ||
+          dashboardResult === null ||
+          !("cards" in dashboardResult) ||
+          !Array.isArray(dashboardResult.cards) ||
+          !("homeAssistantBaseUrl" in dashboardResult) ||
+          typeof dashboardResult.homeAssistantBaseUrl !== "string" ||
+          !dashboardResult.cards.every(
+            (card) =>
+              typeof card === "object" &&
+              card !== null &&
+              "id" in card &&
+              typeof card.id === "string" &&
+              "type" in card &&
+              typeof card.type === "string",
+          )
+        ) {
+          throw new Error("The server returned invalid landing page widgets.");
+        }
+        setLandingWidgetIds(widgetsResult.widgetIds);
+        setWidgetDraftIds(widgetsResult.widgetIds);
+        const loadedPositions = widgetsResult.positions as Record<
+          string,
+          LandingWidgetPosition
+        >;
+        setLandingWidgetPositions(loadedPositions);
+        setWidgetDraftPositions(loadedPositions);
+        setAvailableWidgets(dashboardResult.cards as DashboardCard[]);
+        setHomeAssistantBaseUrl(dashboardResult.homeAssistantBaseUrl);
       } catch (loadError) {
         if (!controller.signal.aborted) {
           setError(
@@ -230,7 +334,6 @@ export default function Home() {
         }
       }
     };
-    void loadSettings();
     void loadSession();
     return () => controller.abort();
   }, []);
@@ -269,15 +372,128 @@ export default function Home() {
     }
   };
 
+  const signOut = async () => {
+    setError("");
+    try {
+      const response = await fetch("/api/auth/logout", { method: "POST" });
+      const result: unknown = await response.json();
+      if (!response.ok) {
+        const message =
+          typeof result === "object" &&
+          result !== null &&
+          "error" in result &&
+          typeof result.error === "string"
+            ? result.error
+            : "Unable to sign out right now.";
+        throw new Error(message);
+      }
+      setSessionUser(null);
+      setLandingWidgetIds([]);
+      setWidgetDraftIds([]);
+      setLandingWidgetPositions({});
+      setWidgetDraftPositions({});
+      setAvailableWidgets([]);
+      setHomeAssistantBaseUrl("");
+      setIsWidgetModalOpen(false);
+      setIsWidgetPositioning(false);
+      setIsCustomizeOpen(false);
+      setIsPositioning(false);
+      setDraft(settings);
+    } catch (signOutError) {
+      setError(
+        signOutError instanceof Error
+          ? signOutError.message
+          : "Unable to sign out right now.",
+      );
+    }
+  };
+
+  const saveLandingWidgets = async (
+    widgetIds: string[],
+    positions: Record<string, LandingWidgetPosition>,
+  ) => {
+    setError("");
+    try {
+      const selectedPositions = Object.fromEntries(
+        widgetIds.map((id, index) => [
+          id,
+          positions[id] ??
+            landingWidgetPositions[id] ??
+            defaultLandingWidgetPosition(index),
+        ]),
+      );
+      const response = await fetch("/api/user-settings/landing-widgets", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ widgetIds, positions: selectedPositions }),
+      });
+      const result: unknown = await response.json();
+      if (
+        !response.ok ||
+        typeof result !== "object" ||
+        result === null ||
+        !("widgetIds" in result) ||
+        !Array.isArray(result.widgetIds) ||
+        !result.widgetIds.every((id) => typeof id === "string") ||
+        !("positions" in result) ||
+        typeof result.positions !== "object" ||
+        result.positions === null ||
+        Array.isArray(result.positions)
+      ) {
+        throw new Error(
+          typeof result === "object" &&
+            result !== null &&
+            "error" in result &&
+            typeof result.error === "string"
+            ? result.error
+            : "Unable to save your landing page widgets.",
+        );
+      }
+      setLandingWidgetIds(result.widgetIds);
+      setLandingWidgetPositions(
+        result.positions as Record<string, LandingWidgetPosition>,
+      );
+      setWidgetDraftPositions(
+        result.positions as Record<string, LandingWidgetPosition>,
+      );
+      setIsWidgetModalOpen(false);
+    } catch (saveError) {
+      setError(
+        saveError instanceof Error
+          ? saveError.message
+          : "Unable to save your landing page widgets.",
+      );
+    }
+  };
+
   const startPositionDrag = (
-    item: "logo" | "welcome",
+    item: "logo" | "welcome" | `image:${string}` | `widget:${string}`,
     event: React.PointerEvent<HTMLDivElement>,
   ) => {
     const element = event.currentTarget;
     const stage = mainRef.current;
     if (!stage || event.button !== 0) return;
-    const x = item === "logo" ? draft.logoX : draft.welcomeX;
-    const y = item === "logo" ? draft.logoY : draft.welcomeY;
+    const widgetId = item.startsWith("widget:") ? item.slice(7) : null;
+    const widgetIndex = widgetId ? widgetDraftIds.indexOf(widgetId) : -1;
+    const widgetPosition =
+      widgetId && widgetIndex >= 0
+        ? widgetDraftPositions[widgetId] ?? defaultLandingWidgetPosition(widgetIndex)
+        : null;
+    const image = item.startsWith("image:")
+      ? draft.images.find((candidate) => candidate.id === item.slice(6))
+      : null;
+    const x =
+      item === "logo"
+        ? draft.logoX
+        : item === "welcome"
+          ? draft.welcomeX
+          : widgetPosition?.x ?? image?.x ?? 50;
+    const y =
+      item === "logo"
+        ? draft.logoY
+        : item === "welcome"
+          ? draft.welcomeY
+          : widgetPosition?.y ?? image?.y ?? 50;
     dragRef.current = {
       item,
       pointerId: event.pointerId,
@@ -302,38 +518,81 @@ export default function Home() {
       0,
       Math.min(100, drag.y + ((event.clientY - drag.pointerY) / bounds.height) * 100),
     );
-    setDraft((current) =>
-      drag.item === "logo"
-        ? { ...current, logoX: x, logoY: y }
-        : { ...current, welcomeX: x, welcomeY: y },
-    );
+    if (drag.item.startsWith("widget:")) {
+      const widgetId = drag.item.slice(7);
+      setWidgetDraftPositions((positions) => ({
+        ...positions,
+        [widgetId]: { x, y },
+      }));
+      return;
+    }
+    setDraft((current) => {
+      if (drag.item === "logo") return { ...current, logoX: x, logoY: y };
+      if (drag.item === "welcome") return { ...current, welcomeX: x, welcomeY: y };
+      const imageId = drag.item.slice(6);
+      return {
+        ...current,
+        images: current.images.map((image) =>
+          image.id === imageId ? { ...image, x, y } : image,
+        ),
+      };
+    });
   };
 
   const finishPositionDrag = () => {
     dragRef.current = null;
   };
 
-  const readLogoFile = (file: File | undefined) => {
+  const readImageFile = (
+    file: File | undefined,
+    onRead: (dataUrl: string) => void,
+  ) => {
     if (!file) return;
     if (!["image/png", "image/jpeg", "image/webp", "image/gif"].includes(file.type)) {
-      setError("Choose a PNG, JPEG, WebP, or GIF logo image.");
+      setError("Choose a PNG, JPEG, WebP, or GIF image.");
       return;
     }
-    if (file.size > 1_000_000) {
-      setError("Logo images must be 1 MB or smaller.");
+    if (file.size > 12 * 1024 * 1024) {
+      setError("Each landing page image must be 12 MB or smaller.");
       return;
     }
     const reader = new FileReader();
     reader.onload = () => {
       if (typeof reader.result !== "string") {
-        setError("The selected logo could not be read.");
+        setError("The selected image could not be read.");
         return;
       }
-      setDraft((current) => ({ ...current, logoDataUrl: reader.result as string }));
+      onRead(reader.result);
       setError("");
     };
-    reader.onerror = () => setError("The selected logo could not be read.");
+    reader.onerror = () => setError("The selected image could not be read.");
     reader.readAsDataURL(file);
+  };
+
+  const addLandingImage = (file: File | undefined) => {
+    if (draft.images.length >= 8) {
+      setError("You can add up to 8 additional landing page images.");
+      return;
+    }
+    readImageFile(file, (dataUrl) => {
+      setDraft((current) => ({
+        ...current,
+        images: [
+          ...current.images,
+          { id: crypto.randomUUID(), dataUrl, x: 50, y: 50, width: 22 },
+        ],
+      }));
+    });
+  };
+
+  const setLandingBackground = (file: File | undefined) => {
+    readImageFile(file, (dataUrl) => {
+      setDraft((current) => ({
+        ...current,
+        backgroundMode: "image",
+        backgroundImageDataUrl: dataUrl,
+      }));
+    });
   };
 
   const displayedSettings = isPositioning ? draft : settings;
@@ -343,15 +602,30 @@ export default function Home() {
       className="relative min-h-svh w-full overflow-hidden bg-black"
       onPointerCancel={finishPositionDrag}
       ref={mainRef}
+      style={{
+        backgroundColor: displayedSettings.backgroundColor,
+        backgroundImage:
+          displayedSettings.backgroundMode === "image" &&
+          displayedSettings.backgroundImageDataUrl
+          ? `url("${displayedSettings.backgroundImageDataUrl}")`
+          : undefined,
+        backgroundPosition: "center",
+        backgroundSize: "cover",
+      }}
     >
-      <Image
-        alt=""
-        className="object-cover"
-        fill
-        priority
-        sizes="100vw"
-        src="/landing.png"
-      />
+      {displayedSettings.backgroundMode === "original" && (
+        <Image
+          alt=""
+          className="object-cover"
+          fill
+          priority
+          sizes="100vw"
+          src="/landing.png"
+        />
+      )}
+      {isPositioning && (
+        <div className="pointer-events-none absolute inset-0 z-[5] border-2 border-dashed border-white/70" />
+      )}
       {displayedSettings.logoDataUrl && (
         <div
           aria-label="Landing page logo"
@@ -382,10 +656,43 @@ export default function Home() {
           />
         </div>
       )}
+      {displayedSettings.images.map((image, index) => (
+        <div
+          aria-label={`Landing page image ${index + 1}`}
+          className={`absolute z-10 -translate-x-1/2 -translate-y-1/2 ${
+            isPositioning
+              ? "touch-none cursor-move rounded-lg outline outline-2 outline-dashed outline-white"
+              : "pointer-events-none"
+          }`}
+          key={image.id}
+          onPointerDown={
+            isPositioning
+              ? (event) => startPositionDrag(`image:${image.id}`, event)
+              : undefined
+          }
+          onPointerMove={isPositioning ? updatePositionDrag : undefined}
+          onPointerUp={isPositioning ? finishPositionDrag : undefined}
+          style={{
+            left: `${image.x}%`,
+            top: `${image.y}%`,
+            width: `${image.width}%`,
+          }}
+        >
+          <Image
+            alt=""
+            className="h-auto w-full object-contain drop-shadow-xl"
+            draggable={false}
+            height={600}
+            src={image.dataUrl}
+            unoptimized
+            width={800}
+          />
+        </div>
+      ))}
       {displayedSettings.welcomeEnabled && (
         <div
           aria-label="Welcome message"
-          className={`absolute z-10 max-w-[min(36rem,90vw)] -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-white/30 bg-black/35 px-6 py-5 text-center text-lg font-semibold text-white shadow-xl shadow-black/20 backdrop-blur-xl ${
+          className={`absolute z-10 max-w-[min(36rem,90vw)] -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-white/30 bg-black/35 px-6 py-5 text-center font-semibold shadow-xl shadow-black/20 backdrop-blur-xl ${
             isPositioning
               ? "touch-none cursor-move outline outline-2 outline-dashed outline-white"
               : "pointer-events-none"
@@ -400,11 +707,66 @@ export default function Home() {
             left: `${displayedSettings.welcomeX}%`,
             top: `${displayedSettings.welcomeY}%`,
             whiteSpace: "pre-wrap",
+            color: displayedSettings.welcomeColor,
+            fontFamily: displayedSettings.welcomeFontFamily,
+            fontSize: `${displayedSettings.welcomeFontSize}px`,
           }}
         >
           {displayedSettings.welcomeText}
         </div>
       )}
+      {sessionUser &&
+        availableWidgets.filter((widget) => landingWidgetIds.includes(widget.id)).length > 0 && (
+          <div className="pointer-events-none absolute inset-0 z-20">
+            {availableWidgets
+              .filter((widget) => landingWidgetIds.includes(widget.id))
+              .map((widget) => {
+                const widgetIndex = landingWidgetIds.indexOf(widget.id);
+                const position =
+                  (isWidgetPositioning
+                    ? widgetDraftPositions[widget.id]
+                    : landingWidgetPositions[widget.id]) ??
+                  defaultLandingWidgetPosition(widgetIndex);
+                return (
+                  <div
+                    aria-label={`${widget.title} landing page widget`}
+                    className={`pointer-events-auto absolute w-[min(90vw,24rem)] -translate-x-1/2 -translate-y-1/2 sm:w-[min(22vw,24rem)] ${
+                      widget.type === "embed" ||
+                      widget.type === "home-assistant-dashboard"
+                        ? "h-[35vh] min-h-48"
+                        : ""
+                    } ${
+                      isWidgetPositioning
+                        ? "touch-none cursor-move rounded-lg outline outline-2 outline-dashed outline-white/80"
+                        : ""
+                    }`}
+                    key={widget.id}
+                    onPointerDown={
+                      isWidgetPositioning
+                        ? (event) => startPositionDrag(`widget:${widget.id}`, event)
+                        : undefined
+                    }
+                    onPointerMove={
+                      isWidgetPositioning ? updatePositionDrag : undefined
+                    }
+                    onPointerUp={
+                      isWidgetPositioning ? finishPositionDrag : undefined
+                    }
+                    role={isWidgetPositioning ? "group" : undefined}
+                    style={{
+                      left: `${position.x}%`,
+                      top: `${position.y}%`,
+                    }}
+                  >
+                    <DashboardCardContent
+                      card={widget}
+                      homeAssistantBaseUrl={homeAssistantBaseUrl}
+                    />
+                  </div>
+                );
+              })}
+          </div>
+        )}
       {error && (
         <p
           className="fixed left-1/2 top-4 z-50 max-w-[90vw] -translate-x-1/2 rounded-lg bg-red-950/90 px-4 py-2 text-sm text-white shadow-lg"
@@ -413,7 +775,7 @@ export default function Home() {
           {error}
         </p>
       )}
-      {isAdmin && !isPositioning && (
+      {sessionUser?.role === "admin" && !isPositioning && !isWidgetPositioning && (
         <button
           className="fixed bottom-5 left-5 z-20 rounded-full border border-white/50 bg-transparent px-5 py-2.5 text-sm font-semibold text-white shadow-lg backdrop-blur-md transition hover:border-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
           onClick={() => {
@@ -423,12 +785,12 @@ export default function Home() {
           }}
           type="button"
         >
-          Customize landing page
+          Landing page settings
         </button>
       )}
       {isPositioning && (
         <div className="fixed left-1/2 top-4 z-30 flex -translate-x-1/2 flex-wrap justify-center gap-2 rounded-xl border border-white/25 bg-black/65 p-2 text-sm text-white shadow-xl backdrop-blur-lg">
-          <span className="px-2 py-1.5">Drag the logo and welcome box to position them.</span>
+          <span className="px-2 py-1.5">Drag the logo, images, and text box to position them.</span>
           <button
             className="rounded-lg border border-white/50 bg-transparent px-3 py-1.5 font-semibold hover:border-white"
             onClick={() => void saveSettings(draft)}
@@ -449,15 +811,174 @@ export default function Home() {
           </button>
         </div>
       )}
-      <button
-        className="fixed bottom-5 right-5 z-20 rounded-full border border-fuchsia-300/60 bg-black/45 px-5 py-2.5 text-sm font-semibold text-white shadow-lg backdrop-blur-sm transition hover:border-fuchsia-200 hover:bg-black/70 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fuchsia-300"
-        onClick={() => setIsModalOpen(true)}
-        type="button"
-      >
-        Log in
-      </button>
+      {isWidgetPositioning && (
+        <div className="fixed left-1/2 top-4 z-30 flex -translate-x-1/2 flex-wrap justify-center gap-2 rounded-xl border border-white/25 bg-black/65 p-2 text-sm text-white shadow-xl backdrop-blur-lg">
+          <span className="px-2 py-1.5">Drag widgets into place, then save.</span>
+          <button
+            className="rounded-lg border border-white/50 bg-transparent px-3 py-1.5 font-semibold hover:border-white"
+            onClick={() => void saveLandingWidgets(widgetDraftIds, widgetDraftPositions)}
+            type="button"
+          >
+            Save widget layout
+          </button>
+          <button
+            className="rounded-lg border border-white/30 bg-transparent px-3 py-1.5 hover:border-white"
+            onClick={() => {
+              setWidgetDraftPositions(landingWidgetPositions);
+              setIsWidgetPositioning(false);
+              setError("");
+            }}
+            type="button"
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+      {sessionUser ? (
+        <div className="fixed bottom-5 right-5 z-20 flex items-center gap-2">
+          <span className="hidden rounded-full border border-white/30 bg-black/45 px-4 py-2.5 text-sm text-white backdrop-blur-sm sm:inline">
+            {sessionUser.email}
+          </span>
+          <button
+            className="rounded-full border border-fuchsia-300/60 bg-black/45 px-5 py-2.5 text-sm font-semibold text-white shadow-lg backdrop-blur-sm transition hover:border-fuchsia-200 hover:bg-black/70 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fuchsia-300"
+            onClick={() => router.push("/dashboard")}
+            type="button"
+          >
+            Dashboard
+          </button>
+          {landingWidgetIds.length > 0 && !isWidgetPositioning && (
+            <button
+              className="rounded-full border border-white/30 bg-black/45 px-4 py-2.5 text-sm font-semibold text-white shadow-lg backdrop-blur-sm transition hover:border-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+              onClick={() => {
+                setWidgetDraftPositions(landingWidgetPositions);
+                setIsWidgetPositioning(true);
+              }}
+              type="button"
+            >
+              Arrange widgets
+            </button>
+          )}
+          {!isWidgetPositioning && (
+            <button
+              className="rounded-full border border-white/30 bg-black/45 px-4 py-2.5 text-sm font-semibold text-white shadow-lg backdrop-blur-sm transition hover:border-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+              onClick={() => {
+                setWidgetDraftIds(landingWidgetIds);
+                setIsWidgetModalOpen(true);
+              }}
+              type="button"
+            >
+              Landing widgets
+            </button>
+          )}
+          <button
+            className="rounded-full border border-white/30 bg-black/45 px-4 py-2.5 text-sm font-semibold text-white shadow-lg backdrop-blur-sm transition hover:border-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+            onClick={() => void signOut()}
+            type="button"
+          >
+            Log out
+          </button>
+        </div>
+      ) : (
+        <button
+          className="fixed bottom-5 right-5 z-20 rounded-full border border-fuchsia-300/60 bg-black/45 px-5 py-2.5 text-sm font-semibold text-white shadow-lg backdrop-blur-sm transition hover:border-fuchsia-200 hover:bg-black/70 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fuchsia-300"
+          onClick={() => setIsModalOpen(true)}
+          type="button"
+        >
+          Log in
+        </button>
+      )}
 
-      {isCustomizeOpen && (
+      {isWidgetModalOpen && sessionUser && !isWidgetPositioning && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setIsWidgetModalOpen(false);
+          }}
+          role="presentation"
+        >
+          <section
+            aria-labelledby="landing-widgets-title"
+            aria-modal="true"
+            className="max-h-[85dvh] w-full max-w-lg overflow-y-auto rounded-2xl border border-zinc-200 bg-white p-6 text-zinc-900 shadow-2xl dark:border-zinc-700 dark:bg-zinc-900 dark:text-white"
+            role="dialog"
+          >
+            <h2 className="text-xl font-bold" id="landing-widgets-title">
+              Landing page widgets
+            </h2>
+            <p className="mt-1 text-sm text-zinc-500">
+              Choose objects from your dashboards. These widgets are private and only load while you are signed in.
+            </p>
+            <div className="mt-4 space-y-2">
+              {availableWidgets.length === 0 ? (
+                <p className="rounded-lg bg-zinc-100 p-3 text-sm text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+                  Add objects to a dashboard before placing them here.
+                </p>
+              ) : (
+                availableWidgets.map((widget) => (
+                  <label
+                    className="flex items-center gap-3 rounded-lg border border-zinc-200 p-3 text-sm dark:border-zinc-700"
+                    key={widget.id}
+                  >
+                    <input
+                      checked={widgetDraftIds.includes(widget.id)}
+                      onChange={(event) => {
+                        if (
+                          event.target.checked &&
+                          widgetDraftIds.length >= 24
+                        ) {
+                          setError("You can show up to 24 landing page widgets.");
+                          return;
+                        }
+                        setWidgetDraftIds((current) =>
+                          event.target.checked
+                            ? [...current, widget.id]
+                            : current.filter((id) => id !== widget.id),
+                        );
+                      }}
+                      type="checkbox"
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-semibold">{widget.title}</span>
+                      <span className="block text-xs text-zinc-500">{widget.type}</span>
+                    </span>
+                  </label>
+                ))
+              )}
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                className="rounded-lg border border-zinc-300 px-4 py-2 text-sm dark:border-zinc-700"
+                onClick={() => {
+                  setIsWidgetModalOpen(false);
+                  setWidgetDraftIds(landingWidgetIds);
+                }}
+                type="button"
+              >
+                Cancel
+              </button>
+              <button
+                className="rounded-lg border border-indigo-500 px-4 py-2 text-sm font-semibold text-indigo-700 dark:text-indigo-300"
+                onClick={() => {
+                  const nextPositions = Object.fromEntries(
+                    widgetDraftIds.map((id, index) => [
+                      id,
+                      widgetDraftPositions[id] ??
+                        landingWidgetPositions[id] ??
+                        defaultLandingWidgetPosition(index),
+                    ]),
+                  );
+                  void saveLandingWidgets(widgetDraftIds, nextPositions);
+                }}
+                type="button"
+              >
+                Save widgets
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {isCustomizeOpen && sessionUser?.role === "admin" && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
           onMouseDown={(event) => {
@@ -468,16 +989,16 @@ export default function Home() {
           <section
             aria-labelledby="landing-customize-title"
             aria-modal="true"
-            className="w-full max-w-lg rounded-2xl border border-zinc-200 bg-white p-6 text-zinc-900 shadow-2xl dark:border-zinc-700 dark:bg-zinc-900 dark:text-white"
+            className="max-h-[92dvh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-zinc-200 bg-white p-6 text-zinc-900 shadow-2xl dark:border-zinc-700 dark:bg-zinc-900 dark:text-white"
             role="dialog"
           >
             <div className="flex items-start justify-between gap-4">
               <div>
                 <h2 className="text-xl font-bold" id="landing-customize-title">
-                  Customize landing page
+                  Landing page settings
                 </h2>
                 <p className="mt-1 text-sm text-zinc-500">
-                  Add a logo or welcome message, then place them anywhere on the page.
+                  Customize the background and position your images and welcome text.
                 </p>
               </div>
               <button
@@ -489,69 +1010,373 @@ export default function Home() {
                 ×
               </button>
             </div>
-            <label className="mt-5 block text-sm font-semibold" htmlFor="landing-logo">
-              Logo image
-              <input
-                accept="image/png,image/jpeg,image/webp,image/gif"
-                className="mt-2 block w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-2 text-sm file:mr-3 file:rounded-md file:border-0 file:bg-transparent file:px-2 file:py-1 file:font-semibold dark:border-zinc-700"
-                id="landing-logo"
-                onChange={(event) => readLogoFile(event.currentTarget.files?.[0])}
-                type="file"
-              />
-              <span className="mt-1 block text-xs font-normal text-zinc-500">
-                PNG, JPEG, WebP, or GIF; up to 1 MB.
-              </span>
-            </label>
-            {draft.logoDataUrl && (
-              <div className="mt-3 flex items-center gap-3 rounded-lg border border-zinc-200 p-3 dark:border-zinc-700">
-                <Image
-                  alt="Selected logo preview"
-                  className="h-12 w-24 object-contain"
-                  height={48}
-                  src={draft.logoDataUrl}
-                  unoptimized
-                  width={96}
-                />
+            <div className="mt-5 flex gap-2 border-b border-zinc-200 dark:border-zinc-700">
+              {[
+                { id: "background" as const, label: "Background" },
+                { id: "elements" as const, label: "Images & text" },
+              ].map((tab) => (
                 <button
-                  className="rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-xs hover:border-red-500 hover:text-red-600 dark:border-zinc-700"
-                  onClick={() => setDraft((current) => ({ ...current, logoDataUrl: null }))}
+                  aria-pressed={settingsTab === tab.id}
+                  className={`border-b-2 px-3 py-2 text-sm font-semibold transition ${
+                    settingsTab === tab.id
+                      ? "border-indigo-500 text-indigo-700 dark:text-indigo-300"
+                      : "border-transparent text-zinc-500 hover:text-zinc-900 dark:hover:text-white"
+                  }`}
+                  key={tab.id}
+                  onClick={() => setSettingsTab(tab.id)}
                   type="button"
                 >
-                  Remove logo
+                  {tab.label}
                 </button>
-              </div>
+              ))}
+            </div>
+
+            {settingsTab === "background" ? (
+              <section className="mt-5 space-y-4" aria-label="Landing page background settings">
+                <div className="grid grid-cols-3 gap-2">
+                  {([
+                    ["original", "Original artwork"],
+                    ["color", "Solid color"],
+                    ["image", "Custom image"],
+                  ] as const).map(([mode, label]) => (
+                    <button
+                      aria-pressed={draft.backgroundMode === mode}
+                      className={`rounded-lg border px-3 py-2 text-xs font-semibold ${
+                        draft.backgroundMode === mode
+                          ? "border-indigo-500 text-indigo-700 dark:text-indigo-300"
+                          : "border-zinc-300 text-zinc-600 dark:border-zinc-700 dark:text-zinc-300"
+                      }`}
+                      key={mode}
+                      onClick={() =>
+                        setDraft((current) => ({
+                          ...current,
+                          backgroundMode: mode,
+                        }))
+                      }
+                      type="button"
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <label className="flex items-center gap-3 rounded-xl border border-zinc-200 p-3 text-sm font-semibold dark:border-zinc-700">
+                    <input
+                      aria-label="Landing page background color"
+                      className="h-12 w-14 cursor-pointer rounded-lg border-0 bg-transparent p-0"
+                      onChange={(event) =>
+                        setDraft((current) => ({
+                          ...current,
+                          backgroundMode: "color",
+                          backgroundColor: event.target.value,
+                        }))
+                      }
+                      type="color"
+                      value={draft.backgroundColor}
+                    />
+                    <span>
+                      <span className="block">Background color</span>
+                      <span className="text-xs font-normal text-zinc-500">
+                        {draft.backgroundColor}
+                      </span>
+                    </span>
+                  </label>
+                  {draft.backgroundMode === "image" ? (
+                    <div>
+                      <label className="block text-sm font-semibold" htmlFor="landing-background-image">
+                        Background image
+                        <input
+                          accept="image/png,image/jpeg,image/webp,image/gif"
+                          className="mt-2 block w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-2 text-xs file:mr-2 file:rounded-md file:border-0 file:bg-transparent file:px-2 file:py-1 file:font-semibold dark:border-zinc-700"
+                          id="landing-background-image"
+                          onChange={(event) => {
+                            const file = event.currentTarget.files?.[0];
+                            event.currentTarget.value = "";
+                            setLandingBackground(file);
+                          }}
+                          type="file"
+                        />
+                      </label>
+                      <p className="mt-1 text-xs text-zinc-500">
+                        PNG, JPEG, WebP, or GIF up to 12 MB.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="flex items-center text-xs text-zinc-500">
+                      {draft.backgroundMode === "original"
+                        ? "Using the original Evil-Lander artwork."
+                        : "Using the selected solid background color."}
+                    </div>
+                  )}
+                </div>
+                <p className="text-xs text-zinc-500">
+                  Background uploads support PNG, JPEG, WebP, or GIF up to 12 MB. Total landing page uploads are limited to 24 MB.
+                </p>
+                {draft.backgroundMode === "image" && draft.backgroundImageDataUrl && (
+                  <div className="flex items-center gap-3 rounded-xl border border-zinc-200 p-3 dark:border-zinc-700">
+                    <Image
+                      alt="Landing page background preview"
+                      className="h-20 w-36 rounded-lg object-cover"
+                      height={80}
+                      src={draft.backgroundImageDataUrl}
+                      unoptimized
+                      width={144}
+                    />
+                    <button
+                      className="rounded-lg border border-zinc-300 bg-transparent px-3 py-2 text-xs hover:border-red-500 hover:text-red-600 dark:border-zinc-700"
+                      onClick={() =>
+                        setDraft((current) => ({
+                          ...current,
+                          backgroundMode: "original",
+                          backgroundImageDataUrl: null,
+                        }))
+                      }
+                      type="button"
+                    >
+                      Use original background
+                    </button>
+                  </div>
+                )}
+              </section>
+            ) : (
+              <section className="mt-5 space-y-5" aria-label="Landing page images and text settings">
+                <div className="rounded-xl border border-zinc-200 p-4 dark:border-zinc-700">
+                  <h3 className="text-sm font-bold">Logo image</h3>
+                  <label className="mt-3 block text-sm font-medium" htmlFor="landing-logo">
+                    Upload or replace logo
+                    <input
+                      accept="image/png,image/jpeg,image/webp,image/gif"
+                      className="mt-2 block w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-2 text-xs file:mr-2 file:rounded-md file:border-0 file:bg-transparent file:px-2 file:py-1 file:font-semibold dark:border-zinc-700"
+                      id="landing-logo"
+                      onChange={(event) => {
+                        const file = event.currentTarget.files?.[0];
+                        event.currentTarget.value = "";
+                        readImageFile(file, (dataUrl) =>
+                          setDraft((current) => ({ ...current, logoDataUrl: dataUrl })),
+                        );
+                      }}
+                      type="file"
+                    />
+                  </label>
+                  {draft.logoDataUrl && (
+                    <div className="mt-3 flex items-center gap-3">
+                      <Image
+                        alt="Selected logo preview"
+                        className="h-12 w-24 object-contain"
+                        height={48}
+                        src={draft.logoDataUrl}
+                        unoptimized
+                        width={96}
+                      />
+                      <button
+                        className="rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-xs hover:border-red-500 hover:text-red-600 dark:border-zinc-700"
+                        onClick={() =>
+                          setDraft((current) => ({ ...current, logoDataUrl: null }))
+                        }
+                        type="button"
+                      >
+                        Remove logo
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <div className="rounded-xl border border-zinc-200 p-4 dark:border-zinc-700">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <h3 className="text-sm font-bold">Additional images</h3>
+                      <p className="mt-1 text-xs text-zinc-500">
+                        Add decorative images, then drag them into place.
+                      </p>
+                    </div>
+                    <label className="cursor-pointer rounded-lg border border-indigo-500 bg-transparent px-3 py-2 text-xs font-semibold text-indigo-700 dark:text-indigo-300">
+                      Add image
+                      <input
+                        accept="image/png,image/jpeg,image/webp,image/gif"
+                        className="sr-only"
+                        onChange={(event) => {
+                          const file = event.currentTarget.files?.[0];
+                          event.currentTarget.value = "";
+                          addLandingImage(file);
+                        }}
+                        type="file"
+                      />
+                    </label>
+                  </div>
+                  {draft.images.length > 0 && (
+                    <ul className="mt-4 grid gap-3 sm:grid-cols-2">
+                      {draft.images.map((image, index) => (
+                        <li
+                          className="flex min-w-0 items-center gap-3 rounded-lg border border-zinc-200 p-2 dark:border-zinc-700"
+                          key={image.id}
+                        >
+                          <Image
+                            alt={`Landing page image ${index + 1} preview`}
+                            className="h-12 w-16 shrink-0 object-contain"
+                            height={48}
+                            src={image.dataUrl}
+                            unoptimized
+                            width={64}
+                          />
+                          <label className="min-w-0 flex-1 text-xs font-medium">
+                            Width
+                            <input
+                              className="mt-1 w-full accent-indigo-600"
+                              max={70}
+                              min={5}
+                              onChange={(event) =>
+                                setDraft((current) => ({
+                                  ...current,
+                                  images: current.images.map((entry) =>
+                                    entry.id === image.id
+                                      ? { ...entry, width: Number(event.target.value) }
+                                      : entry,
+                                  ),
+                                }))
+                              }
+                              type="range"
+                              value={image.width}
+                            />
+                          </label>
+                          <button
+                            aria-label={`Remove image ${index + 1}`}
+                            className="rounded border border-zinc-300 px-2 py-1 text-xs text-red-600 dark:border-zinc-700"
+                            onClick={() =>
+                              setDraft((current) => ({
+                                ...current,
+                                images: current.images.filter(
+                                  (entry) => entry.id !== image.id,
+                                ),
+                              }))
+                            }
+                            type="button"
+                          >
+                            ×
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <p className="mt-3 text-xs text-zinc-500">
+                    Up to 8 images; each image can be up to 12 MB, with 24 MB total across all uploads.
+                  </p>
+                </div>
+
+                <div className="rounded-xl border border-zinc-200 p-4 dark:border-zinc-700">
+                  <label className="flex items-center gap-2 text-sm font-bold">
+                    <input
+                      checked={draft.welcomeEnabled}
+                      onChange={(event) =>
+                        setDraft((current) => ({
+                          ...current,
+                          welcomeEnabled: event.target.checked,
+                          welcomeText:
+                            event.target.checked && !current.welcomeText
+                              ? "Welcome to Evil-Lander"
+                              : current.welcomeText,
+                        }))
+                      }
+                      type="checkbox"
+                    />
+                    Show movable welcome text box
+                  </label>
+                  <label className="mt-3 block text-sm font-medium" htmlFor="landing-welcome">
+                    Text
+                    <textarea
+                      className="mt-2 min-h-20 w-full resize-y rounded-lg border border-zinc-300 bg-transparent px-3 py-2 text-sm outline-none focus:border-indigo-500 disabled:opacity-50 dark:border-zinc-700"
+                      disabled={!draft.welcomeEnabled}
+                      id="landing-welcome"
+                      maxLength={500}
+                      onChange={(event) =>
+                        setDraft((current) => ({
+                          ...current,
+                          welcomeText: event.target.value,
+                        }))
+                      }
+                      placeholder="Welcome to Evil-Lander"
+                      value={draft.welcomeText}
+                    />
+                  </label>
+                  <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                    <label className="text-sm font-medium" htmlFor="landing-font-family">
+                      Font
+                      <select
+                        className="mt-1 w-full rounded-lg border border-zinc-300 bg-transparent px-2 py-2 text-sm dark:border-zinc-700"
+                        disabled={!draft.welcomeEnabled}
+                        id="landing-font-family"
+                        onChange={(event) =>
+                          setDraft((current) => ({
+                            ...current,
+                            welcomeFontFamily: event.target.value,
+                          }))
+                        }
+                        style={{ fontFamily: draft.welcomeFontFamily }}
+                        value={draft.welcomeFontFamily}
+                      >
+                        {[
+                          ["system-ui", "System"],
+                          ["Arial", "Arial"],
+                          ["Georgia", "Georgia"],
+                          ["Times New Roman", "Times New Roman"],
+                          ["Courier New", "Courier New"],
+                          ["Trebuchet MS", "Trebuchet MS"],
+                          ["Verdana", "Verdana"],
+                          ["Impact", "Impact"],
+                        ].map(([value, label]) => (
+                          <option key={value} value={value}>
+                            {label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="text-sm font-medium" htmlFor="landing-font-size">
+                      Text size ({draft.welcomeFontSize}px)
+                      <input
+                        className="mt-3 w-full accent-indigo-600"
+                        disabled={!draft.welcomeEnabled}
+                        id="landing-font-size"
+                        max={96}
+                        min={14}
+                        onChange={(event) =>
+                          setDraft((current) => ({
+                            ...current,
+                            welcomeFontSize: Number(event.target.value),
+                          }))
+                        }
+                        type="range"
+                        value={draft.welcomeFontSize}
+                      />
+                    </label>
+                    <label className="flex items-center gap-2 text-sm font-medium">
+                      Text color
+                      <input
+                        aria-label="Welcome text color"
+                        className="h-9 w-12 cursor-pointer rounded border-0 bg-transparent p-0"
+                        disabled={!draft.welcomeEnabled}
+                        onChange={(event) =>
+                          setDraft((current) => ({
+                            ...current,
+                            welcomeColor: event.target.value,
+                          }))
+                        }
+                        type="color"
+                        value={draft.welcomeColor}
+                      />
+                    </label>
+                  </div>
+                  <p
+                    className="mt-4 rounded-xl border border-white/25 bg-black/35 px-4 py-3 text-center shadow backdrop-blur"
+                    style={{
+                      color: draft.welcomeColor,
+                      fontFamily: draft.welcomeFontFamily,
+                      fontSize: `${Math.min(draft.welcomeFontSize, 36)}px`,
+                    }}
+                  >
+                    {draft.welcomeText || "Welcome to Evil-Lander"}
+                  </p>
+                </div>
+              </section>
             )}
-            <label className="mt-5 flex items-center gap-2 text-sm font-semibold">
-              <input
-                checked={draft.welcomeEnabled}
-                onChange={(event) =>
-                  setDraft((current) => ({
-                    ...current,
-                    welcomeEnabled: event.target.checked,
-                    welcomeText:
-                      event.target.checked && !current.welcomeText
-                        ? "Welcome to Evil-Lander"
-                        : current.welcomeText,
-                  }))
-                }
-                type="checkbox"
-              />
-              Show welcome text box
-            </label>
-            <label className="mt-3 block text-sm font-semibold" htmlFor="landing-welcome">
-              Welcome text
-              <textarea
-                className="mt-2 min-h-24 w-full resize-y rounded-lg border border-zinc-300 bg-transparent px-3 py-2 text-sm font-normal outline-none focus:border-indigo-500 dark:border-zinc-700"
-                disabled={!draft.welcomeEnabled}
-                id="landing-welcome"
-                maxLength={500}
-                onChange={(event) =>
-                  setDraft((current) => ({ ...current, welcomeText: event.target.value }))
-                }
-                placeholder="Welcome to Evil-Lander"
-                value={draft.welcomeText}
-              />
-            </label>
             <div className="mt-6 flex flex-wrap justify-end gap-2">
               <button
                 className="rounded-lg border border-zinc-300 bg-transparent px-4 py-2 text-sm font-medium hover:border-zinc-500 dark:border-zinc-700"
@@ -564,6 +1389,7 @@ export default function Home() {
                 className="rounded-lg border border-indigo-500 bg-transparent px-4 py-2 text-sm font-semibold text-indigo-700 hover:border-indigo-700 dark:text-indigo-300"
                 onClick={() => {
                   setIsCustomizeOpen(false);
+                  setSettingsTab("elements");
                   setIsPositioning(true);
                 }}
                 type="button"

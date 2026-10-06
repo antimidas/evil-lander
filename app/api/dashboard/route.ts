@@ -9,7 +9,9 @@ export async function GET() {
     if (!user) {
       return Response.json({ error: "Sign in to access your dashboard." }, { status: 401 });
     }
-    return Response.json(getDashboard(user.id));
+    return Response.json(getDashboard(user.id), {
+      headers: { "Cache-Control": "no-store" },
+    });
   } catch (error) {
     console.error("Dashboard could not be loaded:", error);
     return Response.json(

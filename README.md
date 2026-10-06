@@ -4,13 +4,13 @@ Evil-Lander is a self-hosted homelab dashboard with a customizable public landin
 
 ## Features
 
-- Public landing page with optional admin-managed logo and movable welcome text.
+- Public landing page with selectable original, solid-color, or uploaded-image backgrounds; an admin-managed logo; up to eight movable images; and a movable, font-customizable welcome text box.
 - Account signup and login. The first account created is the admin; later accounts are regular users.
 - Multiple dashboards with tabs and dedicated iframe dashboards.
 - Desktop shortcuts and frosted-glass widgets that can be moved and resized. Widgets can collapse to desktop icons.
 - Markdown, links, buttons, images, clock, calendar, weather, and website embeds.
 - Home Assistant entity, light, fan, thermostat, and dashboard cards.
-- Theme presets, a live theme preview, custom colors, and local wallpaper uploads.
+- Theme presets, a live theme preview, custom colors, and persistent wallpaper uploads.
 
 ## Install on macOS or Linux
 
@@ -70,6 +70,7 @@ The installer creates `.env.local` with a random 256-bit `AUTH_ENCRYPTION_KEY` i
 - Keep `.env.local` private and do not commit it.
 - Back up the key somewhere secure. Saved Home Assistant credentials cannot be decrypted if the key is lost or changed.
 - `AUTH_DB_PATH` optionally changes the SQLite database path. By default, account and dashboard data is stored in `.data/auth.sqlite`.
+- Landing-page appearance, each user's desktop theme, and each user's selected private landing-page widgets are kept together in the editable `.data/user-settings.json` file. It is created automatically, kept out of Git, and read again on each settings request. Back up this file together with `.data/auth.sqlite`.
 - Store `.data` on persistent storage. The SQLite setup is intended for a single app server, not multiple independently running instances.
 
 The first account is the admin. The admin can configure the Home Assistant URL and long-lived access token from **Home Assistant settings** in dashboard edit mode. The token is encrypted at rest and is not returned to the browser.
@@ -110,11 +111,13 @@ Stop it with `Ctrl+C`. For development, use `pnpm dev`.
 
 ## Usage
 
-The public home page does not open the login dialog automatically. Use **Log in** to sign in or create an account. Admins can use **Customize landing page** to upload a logo, add welcome text, and drag either item into place.
+The public home page does not open the login dialog automatically. Use **Log in** to sign in or create an account. Only signed-in admins can see **Landing page settings** and customize the public landing page. After signing in, admins can choose the original artwork, a solid color, or a custom background; upload a logo and up to eight additional images; and customize the welcome text font, size, and color. Arrange the logo, images, and text by dragging them on the page. Landing images support PNG, JPEG, WebP, and GIF, with a 12 MB per-image and 24 MB total upload limit.
+
+Signed-in users can choose **Landing widgets** on the home page to display their own dashboard objects there; private widgets are fetched and rendered only while signed in. Use **Arrange widgets** and drag a widget directly to move it; **Save widget layout** persists its position in `.data/user-settings.json`. Landing widgets display without an added title card or panel. On the dashboard, **Landing page** returns home without signing out, and an admin can use **Edit landing page** to open its settings directly. The dashboard returns to the landing page after one minute without pointer, keyboard, touch, or scroll activity; this does not sign the user out. Desktop themes and uploaded wallpapers are saved server-side in `.data/user-settings.json` and follow the account across browsers.
 
 Use **Edit dashboard** and **Add object** to create content. For supported content cards, select either an expanded desktop widget or a desktop icon that opens a modal. Drag widget title bars to move widgets, use the lower-right grip to resize them, and use the title-bar collapse control to reduce a widget to an icon. Changes to dashboard object positions and sizes are saved to the server.
 
-Themes are selected in dashboard edit mode. Presets include Midnight, Ocean, Forest, Sunset, Rose, Dracula, Nord, Cyberpunk, Slate, AMOLED, and Cloud. Custom colors can be selected visually; wallpaper images can be selected from a URL or uploaded from the device. Uploaded wallpapers are stored in browser IndexedDB; the practical limit depends on browser storage available on that device. Themes and wallpaper uploads are local to the account's browser/device.
+Themes are selected in dashboard edit mode. Presets include Midnight, Ocean, Forest, Sunset, Rose, Dracula, Nord, Cyberpunk, Slate, AMOLED, and Cloud. Custom colors can be selected visually; wallpaper images can be selected from a URL or uploaded from the device. Theme settings, light/dark mode, and uploaded wallpapers are saved to `.data/user-settings.json` for the signed-in account, and are available across browsers. Uploaded theme wallpapers may be up to 64 MiB.
 
 ## Home Assistant and embeds
 

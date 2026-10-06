@@ -46,7 +46,10 @@ export async function PATCH(request: Request) {
     const settings = parseLandingPageSettings(body);
     if (!settings) {
       return Response.json(
-        { error: "Choose a supported logo image and valid landing page settings." },
+        {
+          error:
+            "Check the landing page settings: images must be supported formats, no more than 12 MB each, and no more than 24 MB total.",
+        },
         { status: 400 },
       );
     }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type FormEvent, type PointerEvent } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type FormEvent, type PointerEvent } from "react";
 import Image from "next/image";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -14,7 +14,12 @@ import type {
   DashboardLayout,
   DashboardSection,
 } from "@/lib/dashboard-data";
-import { loadThemeWallpaper, saveThemeWallpaper } from "@/lib/theme-wallpaper";
+import { loadThemeWallpaper } from "@/lib/theme-wallpaper";
+import {
+  defaultThemeConfig,
+  parseThemeConfig,
+  type ThemeConfig,
+} from "@/lib/theme-settings-shared";
 
 const subscribeToClock = (callback: () => void) => {
   const interval = window.setInterval(callback, 1000);
@@ -31,21 +36,6 @@ type DashboardData = {
   cards: DashboardCard[];
   homeAssistantConfigured: boolean;
   homeAssistantBaseUrl: string;
-};
-
-type ThemeConfig = {
-  presetId: string;
-  primaryColor: string;
-  bgColor: string;
-  backgroundImage: string;
-};
-
-const defaultThemeConfig: ThemeConfig = {
-  presetId: "midnight",
-  primaryColor: "#8b7cff",
-  bgColor: "#090d19",
-  backgroundImage:
-    "radial-gradient(ellipse at 15% 10%, rgba(88, 74, 190, .48), transparent 42%), radial-gradient(ellipse at 85% 85%, rgba(21, 107, 143, .30), transparent 45%), linear-gradient(135deg, #090d19, #11172a 55%, #090d19)",
 };
 
 const themePresets: Array<ThemeConfig & { name: string; description: string }> = [
@@ -150,38 +140,6 @@ const themePresets: Array<ThemeConfig & { name: string; description: string }> =
   },
 ];
 
-function parseThemeConfig(value: string): ThemeConfig {
-  if (!value) return defaultThemeConfig;
-  try {
-    const parsed: unknown = JSON.parse(value);
-    if (
-      typeof parsed === "object" &&
-      parsed !== null &&
-      "presetId" in parsed &&
-      typeof parsed.presetId === "string" &&
-      "primaryColor" in parsed &&
-      typeof parsed.primaryColor === "string" &&
-      /^#[0-9a-f]{6}$/i.test(parsed.primaryColor) &&
-      "bgColor" in parsed &&
-      typeof parsed.bgColor === "string" &&
-      /^#[0-9a-f]{6}$/i.test(parsed.bgColor) &&
-      "backgroundImage" in parsed &&
-      typeof parsed.backgroundImage === "string" &&
-      parsed.backgroundImage.length <= 1_500_000
-    ) {
-      return {
-        presetId: parsed.presetId,
-        primaryColor: parsed.primaryColor,
-        bgColor: parsed.bgColor,
-        backgroundImage: parsed.backgroundImage,
-      };
-    }
-  } catch {
-    return defaultThemeConfig;
-  }
-  return defaultThemeConfig;
-}
-
 function wallpaperUrlFromBackground(backgroundImage: string) {
   const match = backgroundImage.match(/^url\((?:"([^"]*)"|'([^']*)'|([^)]*))\)$/);
   const url = match?.[1] ?? match?.[2] ?? match?.[3] ?? "";
@@ -195,6 +153,48 @@ function wallpaperIdFromBackground(backgroundImage: string) {
     backgroundImage,
   );
   return match?.[1] ?? null;
+}
+
+function blobToDataUrl(blob: Blob) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result !== "string") {
+        reject(new Error("The saved wallpaper could not be read."));
+        return;
+      }
+      resolve(reader.result);
+    };
+    reader.onerror = () => reject(new Error("The saved wallpaper could not be read."));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function persistThemeSettings(config: ThemeConfig) {
+  const response = await fetch("/api/user-settings/theme", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ theme: config }),
+  });
+  const result: unknown = await response.json();
+  if (
+    !response.ok ||
+    typeof result !== "object" ||
+    result === null ||
+    !("theme" in result)
+  ) {
+    throw new Error(
+      typeof result === "object" &&
+        result !== null &&
+        "error" in result &&
+        typeof result.error === "string"
+        ? result.error
+        : "Unable to save this theme.",
+    );
+  }
+  const saved = parseThemeConfig(result.theme);
+  if (!saved) throw new Error("The server returned invalid saved theme settings.");
+  return saved;
 }
 
 function wallpaperBackgroundFromInput(value: string) {
@@ -392,18 +392,14 @@ function weatherCondition(value: unknown) {
 
 function ThemeCustomizationModal({
   config,
-  storedWallpaperUrl,
   onClose,
   onSave,
 }: {
   config: ThemeConfig;
-  storedWallpaperUrl: string;
   onClose: () => void;
-  onSave: (config: ThemeConfig, wallpaper: File | null) => Promise<void>;
+  onSave: (config: ThemeConfig) => Promise<void>;
 }) {
   const [draft, setDraft] = useState(config);
-  const [wallpaperFile, setWallpaperFile] = useState<File | null>(null);
-  const [wallpaperPreviewUrl, setWallpaperPreviewUrl] = useState("");
   const [wallpaperInput, setWallpaperInput] = useState(
     wallpaperUrlFromBackground(config.backgroundImage),
   );
@@ -414,28 +410,13 @@ function ThemeCustomizationModal({
   const selectedPreset =
     themePresets.find((preset) => preset.presetId === draft.presetId) ??
     { name: "Custom", description: "Your colors and wallpaper" };
-  const previewBackgroundImage = wallpaperFile
-    ? wallpaperPreviewUrl
-      ? `url("${wallpaperPreviewUrl}")`
-      : "none"
-    : wallpaperIdFromBackground(draft.backgroundImage)
-      ? storedWallpaperUrl
-        ? `url("${storedWallpaperUrl}")`
-        : "none"
-      : draft.backgroundImage;
-
-  useEffect(
-    () => () => {
-      if (wallpaperPreviewUrl) URL.revokeObjectURL(wallpaperPreviewUrl);
-    },
-    [wallpaperPreviewUrl],
-  );
+  const previewBackgroundImage = draft.backgroundImage;
 
   const applyTheme = async () => {
     setIsSaving(true);
     setWallpaperError("");
     try {
-      await onSave(draft, wallpaperFile);
+      await onSave({ ...draft, mode: config.mode ?? "light" });
       onClose();
     } catch (error) {
       setWallpaperError(
@@ -574,8 +555,6 @@ function ThemeCustomizationModal({
                 key={preset.presetId}
                 onClick={() => {
                   setDraft(preset);
-                  setWallpaperFile(null);
-                  setWallpaperPreviewUrl("");
                   setWallpaperInput(wallpaperUrlFromBackground(preset.backgroundImage));
                   setWallpaperError("");
                 }}
@@ -682,8 +661,6 @@ function ThemeCustomizationModal({
                       : "",
                   );
                   if (backgroundImage !== null) {
-                    setWallpaperFile(null);
-                    setWallpaperPreviewUrl("");
                     setDraft((current) => ({
                       ...current,
                       presetId: "custom",
@@ -714,16 +691,32 @@ function ThemeCustomizationModal({
                     setWallpaperError("Choose a PNG, JPEG, WebP, or GIF wallpaper.");
                     return;
                   }
-                  setWallpaperFile(file);
-                  setWallpaperPreviewUrl(URL.createObjectURL(file));
-                  setDraft((current) => ({ ...current, presetId: "custom" }));
-                  setWallpaperInput("");
-                  setWallpaperError("");
+                  if (file.size > 64 * 1024 * 1024) {
+                    setWallpaperError("Theme wallpapers must be 64 MiB or smaller.");
+                    return;
+                  }
+                  const reader = new FileReader();
+                  reader.onload = () => {
+                    if (typeof reader.result !== "string") {
+                      setWallpaperError("The selected wallpaper could not be read.");
+                      return;
+                    }
+                    setDraft((current) => ({
+                      ...current,
+                      presetId: "custom",
+                      backgroundImage: `url("${reader.result}")`,
+                    }));
+                    setWallpaperInput("");
+                    setWallpaperError("");
+                  };
+                  reader.onerror = () =>
+                    setWallpaperError("The selected wallpaper could not be read.");
+                  reader.readAsDataURL(file);
                 }}
                 type="file"
               />
               <span className="mt-1 block text-xs font-normal text-zinc-500">
-                Saved in this browser&apos;s available storage. Large files may take a little longer to save.
+                Wallpaper images up to 64 MiB are saved in your server-side user settings file.
               </span>
             </label>
             {draft.backgroundImage !== "none" && (
@@ -731,8 +724,6 @@ function ThemeCustomizationModal({
                 className="mt-2 rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-xs font-medium text-zinc-600 transition hover:border-red-400 hover:text-red-700 dark:border-zinc-700 dark:text-zinc-300 dark:hover:text-red-300"
                 onClick={() => {
                   setWallpaperInput("");
-                  setWallpaperFile(null);
-                  setWallpaperPreviewUrl("");
                   setWallpaperError("");
                   setDraft((current) => ({
                     ...current,
@@ -1713,7 +1704,7 @@ function CalendarWidget() {
   );
 }
 
-function CardContent({
+export function DashboardCardContent({
   card,
   homeAssistantBaseUrl,
 }: {
@@ -2579,7 +2570,7 @@ function DesktopObject({
             </button>
           </header>
           <div className="min-h-0 flex-1 overflow-auto bg-white/5 p-4 dark:bg-black/5">
-            <CardContent card={card} homeAssistantBaseUrl={homeAssistantBaseUrl} />
+            <DashboardCardContent card={card} homeAssistantBaseUrl={homeAssistantBaseUrl} />
           </div>
         </section>
         <button
@@ -2796,7 +2787,7 @@ function DesktopObjectModal({
             isIframeModal ? "overflow-hidden" : "overflow-auto p-4 sm:p-6"
           }`}
         >
-          <CardContent card={card} homeAssistantBaseUrl={homeAssistantBaseUrl} />
+          <DashboardCardContent card={card} homeAssistantBaseUrl={homeAssistantBaseUrl} />
         </div>
       </section>
     </div>
@@ -2804,38 +2795,7 @@ function DesktopObjectModal({
 }
 export default function DashboardClient({ user }: { user: AuthUser }) {
   const router = useRouter();
-  const themeStorageKey = `lander-theme:${user.id}`;
-  const subscribeToTheme = useCallback((callback: () => void) => {
-    window.addEventListener("storage", callback);
-    window.addEventListener("lander-theme-change", callback);
-    return () => {
-      window.removeEventListener("storage", callback);
-      window.removeEventListener("lander-theme-change", callback);
-    };
-  }, []);
-  const getStoredTheme = useCallback(
-    () => window.localStorage.getItem(themeStorageKey) ?? "",
-    [themeStorageKey],
-  );
-  const storedTheme = useSyncExternalStore(subscribeToTheme, getStoredTheme, () => "");
-  const themeConfig = useMemo(() => parseThemeConfig(storedTheme), [storedTheme]);
-  const storedWallpaperId = wallpaperIdFromBackground(themeConfig.backgroundImage);
-  const [storedWallpaper, setStoredWallpaper] = useState<{
-    id: string;
-    url: string;
-  } | null>(null);
-  const storedWallpaperUrl =
-    storedWallpaper?.id === storedWallpaperId ? storedWallpaper.url : "";
-  const displayedThemeConfig = useMemo(
-    () =>
-      storedWallpaperId && storedWallpaperUrl
-        ? {
-            ...themeConfig,
-            backgroundImage: `url("${storedWallpaperUrl}")`,
-          }
-        : themeConfig,
-    [storedWallpaperId, storedWallpaperUrl, themeConfig],
-  );
+  const [themeConfig, setThemeConfig] = useState(defaultThemeConfig);
   const [selectedObjectId, setSelectedObjectId] = useState<string | null>(null);
   const [activeDashboardId, setActiveDashboardId] = useState<string | null>(null);
   const [collapsedWidgetIds, setCollapsedWidgetIds] = useState<Set<string>>(
@@ -2843,8 +2803,9 @@ export default function DashboardClient({ user }: { user: AuthUser }) {
   );
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [themeLoaded, setThemeLoaded] = useState(false);
   const [pageError, setPageError] = useState("");
-  const [theme, setTheme] = useState("light");
+  const theme = themeConfig.mode ?? "light";
   const [isEditMode, setIsEditMode] = useState(false);
   const [editor, setEditor] = useState<CardDraft | null>(null);
   const [addContentSectionId, setAddContentSectionId] = useState<string | null>(null);
@@ -2852,49 +2813,96 @@ export default function DashboardClient({ user }: { user: AuthUser }) {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [notice, setNotice] = useState("");
 
-  useEffect(() => {
-    if (!storedWallpaperId) return;
-
-    let objectUrl = "";
-    let isCurrent = true;
-    void loadThemeWallpaper(`${user.id}:${storedWallpaperId}`)
-      .then((image) => {
-        if (!image) throw new Error("The saved wallpaper image is missing from browser storage.");
-        objectUrl = URL.createObjectURL(image);
-        if (isCurrent) {
-          setStoredWallpaper({ id: storedWallpaperId, url: objectUrl });
-        }
-      })
-      .catch((error: unknown) => {
-        if (isCurrent) {
-          setPageError(
-            error instanceof Error
-              ? error.message
-              : "Unable to load saved wallpaper image.",
-          );
-        }
-      });
-
-    return () => {
-      isCurrent = false;
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-    };
-  }, [storedWallpaperId, user.id]);
-
-  const saveThemeConfig = async (config: ThemeConfig, wallpaper: File | null) => {
-    let savedConfig = config;
-    if (wallpaper) {
-      const id = crypto.randomUUID();
-      await saveThemeWallpaper(`${user.id}:${id}`, wallpaper);
-      savedConfig = {
-        ...config,
-        backgroundImage: `url("lander-wallpaper:${id}")`,
-      };
-    }
-    window.localStorage.setItem(themeStorageKey, JSON.stringify(savedConfig));
-    window.dispatchEvent(new Event("lander-theme-change"));
+  const saveThemeConfig = async (config: ThemeConfig) => {
+    const savedConfig = await persistThemeSettings(config);
+    setThemeConfig(savedConfig);
     setNotice("Desktop theme applied.");
   };
+
+  const toggleThemeMode = async () => {
+    try {
+      await saveThemeConfig({
+        ...themeConfig,
+        mode: theme === "light" ? "dark" : "light",
+      });
+    } catch (error) {
+      setPageError(
+        error instanceof Error ? error.message : "Unable to save your theme mode.",
+      );
+    }
+  };
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const loadTheme = async () => {
+      try {
+        const response = await fetch("/api/user-settings/theme", {
+          signal: controller.signal,
+        });
+        const result: unknown = await response.json();
+        if (!response.ok || typeof result !== "object" || result === null || !("theme" in result)) {
+          throw new Error(errorMessage(result, "Unable to load your theme settings."));
+        }
+        if (result.theme !== null) {
+          const savedTheme = parseThemeConfig(result.theme);
+          if (!savedTheme) throw new Error("The server returned invalid theme settings.");
+          setThemeConfig(savedTheme);
+          setThemeLoaded(true);
+          return;
+        }
+
+        const legacyValue = window.localStorage.getItem(`lander-theme:${user.id}`);
+        if (!legacyValue) {
+          setThemeLoaded(true);
+          return;
+        }
+        let legacy: unknown;
+        try {
+          legacy = JSON.parse(legacyValue);
+        } catch (error) {
+          throw new Error("Your existing browser theme settings are invalid.", {
+            cause: error,
+          });
+        }
+        if (typeof legacy !== "object" || legacy === null || !("backgroundImage" in legacy) || typeof legacy.backgroundImage !== "string") {
+          throw new Error("Your existing browser theme settings are invalid.");
+        }
+        const legacyWallpaperId = wallpaperIdFromBackground(legacy.backgroundImage);
+        const legacyBase = parseThemeConfig(
+          legacyWallpaperId
+            ? { ...legacy, backgroundImage: "none" }
+            : legacy,
+        );
+        if (!legacyBase) throw new Error("Your existing browser theme settings are invalid.");
+        let migratedTheme = legacyBase;
+        if (legacyWallpaperId) {
+          const wallpaper = await loadThemeWallpaper(`${user.id}:${legacyWallpaperId}`);
+          if (!wallpaper) {
+            throw new Error("The saved browser wallpaper is missing and could not be migrated.");
+          }
+          migratedTheme = {
+            ...legacyBase,
+            backgroundImage: `url("${await blobToDataUrl(wallpaper)}")`,
+          };
+        }
+        const savedTheme = await persistThemeSettings(migratedTheme);
+        window.localStorage.removeItem(`lander-theme:${user.id}`);
+        setThemeConfig(savedTheme);
+        setThemeLoaded(true);
+      } catch (loadError) {
+        if (!controller.signal.aborted) {
+          setThemeLoaded(true);
+          setPageError(
+            loadError instanceof Error
+              ? loadError.message
+              : "Unable to load your theme settings.",
+          );
+        }
+      }
+    };
+    void loadTheme();
+    return () => controller.abort();
+  }, [user.id]);
 
   const loadDashboard = useCallback(async () => {
     setPageError("");
@@ -2934,6 +2942,40 @@ export default function DashboardClient({ user }: { user: AuthUser }) {
       });
     return () => controller.abort();
   }, [loadDashboard]);
+
+  useEffect(() => {
+    const timeoutMs = 60_000;
+    let lastActivity = Date.now();
+    let timeout: number;
+    const goToLandingPage = () => router.replace("/");
+    const resetInactivityTimer = () => {
+      lastActivity = Date.now();
+      window.clearTimeout(timeout);
+      timeout = window.setTimeout(goToLandingPage, timeoutMs);
+    };
+    const checkInactivity = () => {
+      const remaining = timeoutMs - (Date.now() - lastActivity);
+      if (remaining <= 0) {
+        goToLandingPage();
+      } else {
+        window.clearTimeout(timeout);
+        timeout = window.setTimeout(goToLandingPage, remaining);
+      }
+    };
+    const activityEvents = ["pointerdown", "pointermove", "keydown", "touchstart", "wheel"];
+    activityEvents.forEach((eventName) =>
+      window.addEventListener(eventName, resetInactivityTimer, { passive: true }),
+    );
+    document.addEventListener("visibilitychange", checkInactivity);
+    timeout = window.setTimeout(goToLandingPage, timeoutMs);
+    return () => {
+      window.clearTimeout(timeout);
+      activityEvents.forEach((eventName) =>
+        window.removeEventListener(eventName, resetInactivityTimer),
+      );
+      document.removeEventListener("visibilitychange", checkInactivity);
+    };
+  }, [router]);
 
   const selectDashboard = (id: string) => {
     setActiveDashboardId(id);
@@ -3176,7 +3218,7 @@ export default function DashboardClient({ user }: { user: AuthUser }) {
     }
   };
 
-  if (loading) {
+  if (loading || !themeLoaded) {
     return <main className="min-h-screen bg-zinc-100 p-8 text-zinc-700">Loading dashboard…</main>;
   }
   if (!dashboard) {
@@ -3215,11 +3257,11 @@ export default function DashboardClient({ user }: { user: AuthUser }) {
     <main
       className={`${activeDashboard.kind === "iframe" ? "h-dvh overflow-hidden pb-0" : "min-h-dvh"} flex flex-col px-2 py-2 text-zinc-900 dark:text-white sm:px-3 md:px-4 md:py-3 ${theme === "dark" ? "bg-black" : "bg-zinc-50"}`}
       style={{
-        backgroundColor: displayedThemeConfig.bgColor,
+        backgroundColor: themeConfig.bgColor,
         backgroundImage:
-          displayedThemeConfig.backgroundImage === "none"
+          themeConfig.backgroundImage === "none"
             ? undefined
-            : displayedThemeConfig.backgroundImage,
+            : themeConfig.backgroundImage,
         backgroundPosition: "center",
         backgroundSize: "cover",
       }}
@@ -3323,9 +3365,25 @@ export default function DashboardClient({ user }: { user: AuthUser }) {
           >
             {isEditMode ? "Done" : "Edit dashboard"}
           </button>
-          <button className="rounded-lg border border-zinc-300 bg-transparent px-2.5 py-1.5 text-xs font-medium transition hover:border-zinc-500 dark:border-zinc-600 dark:hover:border-zinc-400" onClick={() => setTheme((current) => (current === "light" ? "dark" : "light"))} type="button">
+          <button className="rounded-lg border border-zinc-300 bg-transparent px-2.5 py-1.5 text-xs font-medium transition hover:border-zinc-500 dark:border-zinc-600 dark:hover:border-zinc-400" onClick={() => void toggleThemeMode()} type="button">
             {theme === "light" ? "Dark" : "Light"} mode
           </button>
+          <button
+            className="rounded-lg border border-fuchsia-300/70 bg-transparent px-2.5 py-1.5 text-xs font-semibold text-fuchsia-700 transition hover:border-fuchsia-500 hover:text-fuchsia-900 dark:text-fuchsia-200 dark:hover:border-fuchsia-300 dark:hover:text-white"
+            onClick={() => router.push("/")}
+            type="button"
+          >
+            Landing page
+          </button>
+          {user.role === "admin" && (
+            <button
+              className="rounded-lg border border-indigo-400/70 bg-transparent px-2.5 py-1.5 text-xs font-semibold text-indigo-700 transition hover:border-indigo-600 dark:text-indigo-200 dark:hover:border-indigo-300 dark:hover:text-white"
+              onClick={() => router.push("/?editLanding=1")}
+              type="button"
+            >
+              Edit landing page
+            </button>
+          )}
           <button className="rounded-lg border border-zinc-300 bg-transparent px-2.5 py-1.5 text-xs font-medium transition hover:border-red-500 hover:text-red-700 dark:border-zinc-600 dark:hover:border-red-400 dark:hover:text-red-300" onClick={() => void handleLogout()} type="button">
             Log out
           </button>
@@ -3352,11 +3410,11 @@ export default function DashboardClient({ user }: { user: AuthUser }) {
           data-dashboard-canvas
           style={{
             minHeight: `max(${canvasHeight}px, calc(100dvh - 11rem))`,
-            backgroundColor: displayedThemeConfig.bgColor,
+            backgroundColor: themeConfig.bgColor,
             backgroundImage:
-              displayedThemeConfig.backgroundImage === "none"
+              themeConfig.backgroundImage === "none"
                 ? "radial-gradient(circle, rgba(148,163,184,.18) 1px, transparent 1px)"
-                : `radial-gradient(circle, rgba(148,163,184,.18) 1px, transparent 1px), ${displayedThemeConfig.backgroundImage}`,
+                : `radial-gradient(circle, rgba(148,163,184,.18) 1px, transparent 1px), ${themeConfig.backgroundImage}`,
             backgroundPosition: "center, center",
             backgroundSize: "22px 22px, cover",
           }}
@@ -3423,7 +3481,6 @@ export default function DashboardClient({ user }: { user: AuthUser }) {
       {isThemeOpen && (
         <ThemeCustomizationModal
           config={themeConfig}
-          storedWallpaperUrl={storedWallpaperUrl}
           onClose={() => setIsThemeOpen(false)}
           onSave={saveThemeConfig}
         />

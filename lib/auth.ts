@@ -151,6 +151,7 @@ export function getDatabase() {
 
     CREATE TABLE IF NOT EXISTS landing_page_settings (
       id INTEGER PRIMARY KEY CHECK (id = 1),
+      background_mode TEXT NOT NULL DEFAULT 'original',
       logo_data_url TEXT,
       logo_x REAL NOT NULL DEFAULT 50 CHECK (logo_x BETWEEN 0 AND 100),
       logo_y REAL NOT NULL DEFAULT 24 CHECK (logo_y BETWEEN 0 AND 100),
@@ -158,9 +159,57 @@ export function getDatabase() {
       welcome_text TEXT NOT NULL DEFAULT '',
       welcome_x REAL NOT NULL DEFAULT 50 CHECK (welcome_x BETWEEN 0 AND 100),
       welcome_y REAL NOT NULL DEFAULT 50 CHECK (welcome_y BETWEEN 0 AND 100),
+      background_color TEXT NOT NULL DEFAULT '#09000f',
+      background_image_data_url TEXT,
+      images_json TEXT NOT NULL DEFAULT '[]',
+      welcome_font_family TEXT NOT NULL DEFAULT 'system-ui',
+      welcome_font_size INTEGER NOT NULL DEFAULT 32,
+      welcome_color TEXT NOT NULL DEFAULT '#ffffff',
       updated_at INTEGER NOT NULL
     );
   `);
+
+  const landingPageColumns = new Set(
+    database
+      .prepare("PRAGMA table_info(landing_page_settings)")
+      .all()
+      .map((column) => column.name),
+  );
+  if (!landingPageColumns.has("background_mode")) {
+    database.exec(
+      "ALTER TABLE landing_page_settings ADD COLUMN background_mode TEXT NOT NULL DEFAULT 'original'",
+    );
+  }
+  if (!landingPageColumns.has("background_color")) {
+    database.exec(
+      "ALTER TABLE landing_page_settings ADD COLUMN background_color TEXT NOT NULL DEFAULT '#09000f'",
+    );
+  }
+  if (!landingPageColumns.has("background_image_data_url")) {
+    database.exec(
+      "ALTER TABLE landing_page_settings ADD COLUMN background_image_data_url TEXT",
+    );
+  }
+  if (!landingPageColumns.has("images_json")) {
+    database.exec(
+      "ALTER TABLE landing_page_settings ADD COLUMN images_json TEXT NOT NULL DEFAULT '[]'",
+    );
+  }
+  if (!landingPageColumns.has("welcome_font_family")) {
+    database.exec(
+      "ALTER TABLE landing_page_settings ADD COLUMN welcome_font_family TEXT NOT NULL DEFAULT 'system-ui'",
+    );
+  }
+  if (!landingPageColumns.has("welcome_font_size")) {
+    database.exec(
+      "ALTER TABLE landing_page_settings ADD COLUMN welcome_font_size INTEGER NOT NULL DEFAULT 32",
+    );
+  }
+  if (!landingPageColumns.has("welcome_color")) {
+    database.exec(
+      "ALTER TABLE landing_page_settings ADD COLUMN welcome_color TEXT NOT NULL DEFAULT '#ffffff'",
+    );
+  }
 
   const sectionColumns = new Set(
     database
