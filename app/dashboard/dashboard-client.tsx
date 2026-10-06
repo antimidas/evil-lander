@@ -1775,6 +1775,8 @@ export function DashboardCardContent({
     return (
       <iframe
         className="block h-full min-h-0 w-full border-0 bg-white"
+        allow="fullscreen; autoplay; picture-in-picture; clipboard-write"
+        allowFullScreen
         loading="lazy"
         referrerPolicy="strict-origin-when-cross-origin"
         src={dashboardUrl.toString()}
@@ -1819,6 +1821,8 @@ function WebsiteEmbed({ url, title }: { url: string; title: string }) {
   return (
     <iframe
       className="block h-full min-h-0 w-full border-0 bg-white"
+      allow="fullscreen; autoplay; picture-in-picture; clipboard-write"
+      allowFullScreen
       loading="lazy"
       referrerPolicy="strict-origin-when-cross-origin"
       sandbox={`allow-forms allow-popups allow-scripts${isCrossOrigin ? " allow-same-origin" : ""}`}
