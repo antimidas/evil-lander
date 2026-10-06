@@ -23,6 +23,14 @@ fail() {
   exit 1
 }
 
+app_port() {
+  local port=${PORT:-}
+  if [[ -z "$port" && -f "$PROJECT_ROOT/.env.local" ]]; then
+    port=$(sed -n 's/^PORT=//p' "$PROJECT_ROOT/.env.local" | tail -n 1)
+  fi
+  printf '%s' "${port:-3000}"
+}
+
 require_user_systemd() {
   command -v systemctl >/dev/null 2>&1 || fail "systemctl is required for this command."
   systemctl --user show-environment >/dev/null 2>&1 ||
@@ -94,20 +102,20 @@ start_service() {
     fail "Service is not installed. Run: $PROJECT_ROOT/dashboard install"
 
   if systemctl --user is-active --quiet "$SERVICE_NAME"; then
-    printf 'Dashboard is already running at http://localhost:3000\n'
+    printf 'Dashboard is already running at http://localhost:%s\n' "$(app_port)"
     return
   fi
 
   if command -v ss >/dev/null 2>&1 &&
-    ss -ltnH 'sport = :3000' | grep -q .; then
-    fail "Port 3000 is already in use. Stop the other service before starting the dashboard."
+    ss -ltnH "sport = :$(app_port)" | grep -q .; then
+    fail "Port $(app_port) is already in use. Stop the other service before starting the dashboard."
   fi
 
   build_app
   systemctl --user start "$SERVICE_NAME"
   systemctl --user is-active --quiet "$SERVICE_NAME" ||
     fail "The dashboard service did not start. Check with: dashboard logs"
-  printf 'Dashboard is running at http://localhost:3000\n'
+  printf 'Dashboard is running at http://localhost:%s\n' "$(app_port)"
 }
 
 serve() {
@@ -121,7 +129,7 @@ serve() {
   export NEXT_TELEMETRY_DISABLED=1
   exec node "$PROJECT_ROOT/node_modules/next/dist/bin/next" start \
     --hostname "${HOST:-0.0.0.0}" \
-    --port "${PORT:-3000}"
+    --port "$(app_port)"
 }
 
 usage() {

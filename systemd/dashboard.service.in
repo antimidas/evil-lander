@@ -8,7 +8,6 @@ WorkingDirectory=@PROJECT_ROOT@
 Environment=NODE_ENV=production
 Environment=NEXT_TELEMETRY_DISABLED=1
 Environment=HOST=0.0.0.0
-Environment=PORT=3000
 ExecStart=/bin/bash "@DASHBOARD_EXECUTABLE@" serve
 Restart=on-failure
 RestartSec=5

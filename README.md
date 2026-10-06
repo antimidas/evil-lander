@@ -12,7 +12,91 @@ Evil-Lander is a self-hosted homelab dashboard with a customizable public landin
 - Home Assistant entity, light, fan, thermostat, and dashboard cards.
 - Theme presets, a live theme preview, custom colors, and persistent wallpaper uploads.
 
-## Install on macOS or Linux
+## Install on Windows, macOS, or Linux
+
+### Windows
+
+Requirements: Windows 10 or newer on x64 or ARM64, an internet connection, and a user account with write access to its local application-data directory. The installer does not require administrator privileges.
+
+From PowerShell, clone the repository and run the per-user installer:
+
+```powershell
+git clone https://github.com/antimidas/evil-lander.git
+cd evil-lander
+powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1
+```
+
+#### What the installer does
+
+The installer:
+
+- Downloads a checksum-verified Node.js release if Node.js 22.13 or newer with npm is not already available (installed to `%LOCALAPPDATA%\Evil-Lander\node-v*`)
+- Installs the pinned pnpm release under `%LOCALAPPDATA%\Evil-Lander\pnpm`
+- Installs project dependencies from `pnpm-lock.yaml`
+- Generates a private encryption key in `.env.local` if one does not already exist
+- Builds the production app
+- Adds its local Node.js and pnpm directories to your user `PATH` (open a new PowerShell window after installation)
+
+#### Interactive installer
+
+When run in a PowerShell terminal, the installer prompts for:
+
+- **Install location**: Where to install the web app. If you specify a different directory, application files are copied there (except `node_modules`, `.next`, `.git`, `.data`, and `.env.local`). The default is the current checkout.
+- **Port**: The port the app listens on (1–65535, default 3000). This is saved as `PORT` in `.env.local` and used by `pnpm start -p` and the production build.
+- **Admin account** (optional): Leave blank to skip admin creation (the first account to sign up becomes admin). Otherwise, enter an email-style username (the app signs in with email, e.g. `admin@lander.local`) and a password (1–128 characters). An existing user with that email is left unchanged.
+
+#### Unattended installation
+
+For scripted/unattended installs, set environment variables and pass command-line options:
+
+```powershell
+$env:INSTALL_ADMIN_PASSWORD = 'secure-password-here'
+powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1 `
+  -Yes `
+  -Dir 'C:\homelab' `
+  -Port 8080 `
+  -Admin 'admin@lander.local'
+```
+
+Installer options:
+
+- `-Yes` or `-Y`: Skip prompts and use the options below (or defaults)
+- `-Dir PATH`: Install location for the web app (default: current checkout)
+- `-Port PORT`: Port to listen on (default: 3000)
+- `-Admin EMAIL`: Admin username to create (email-style; empty or omit to skip)
+- `-Help` or `-H`: Show help and exit
+
+#### Starting the app after installation
+
+After installation, close and reopen PowerShell, then:
+
+**Production mode:**
+
+```powershell
+cd C:\path\to\evil-lander
+pnpm start -p 8080
+```
+
+(Replace `8080` with your configured port if different from 3000.)
+
+**Development mode:**
+
+```powershell
+pnpm dev -p 8080
+```
+
+Open [http://localhost:8080](http://localhost:8080) (or your configured port) in a browser. If you created an admin account during install, sign in with that email and password. Otherwise, sign up to create the first account, which receives the admin role.
+
+**Runtime configuration:**
+
+The `.env.local` file in the install directory contains:
+
+- `AUTH_ENCRYPTION_KEY`: Private key for secure session storage (generated at install time)
+- `PORT`: The port the app listens on (set by the installer)
+
+Both stay local and are excluded from Git.
+
+### macOS or Linux
 
 Requirements: macOS or a glibc-based Linux distribution, an internet connection, and a user account with write access to its home directory. The installer downloads a checksum-verified Node.js release when Node.js 22.13 or newer with npm is not already available. It installs the pinned pnpm release, project dependencies, generates a private Home Assistant encryption key in `.env.local` if one is not already set, and builds the production app.
 
@@ -25,6 +109,14 @@ cd evil-lander
 ```
 
 If you fork the project, replace `antimidas` with your GitHub account or organization.
+
+When run in a terminal, the installer shows a TUI (`whiptail` or `dialog` if installed, otherwise plain prompts) to choose:
+
+- the install location of the web app (files are copied there if it is not the current checkout),
+- the port it listens on (saved as `PORT` in `.env.local`; used by `pnpm start -p`, `dashboard start` and the systemd service),
+- an optional admin account. Leave the username blank to skip; otherwise enter an email-style name (the app signs in with email) and a password. An existing user is left unchanged.
+
+For unattended installs: `INSTALL_ADMIN_PASSWORD=... ./scripts/install.sh --yes --dir ~/lander --port 8080 --admin admin@lander.local`.
 
 The installer supports:
 
@@ -53,12 +145,18 @@ pnpm start
 
 Open [http://localhost:3000](http://localhost:3000). Sign up to create the first account, which receives the admin role.
 
-### Install without cloning
+### Install from an existing project directory
 
-If you already have this project directory, run:
+If you already have this project directory, run the installer for your platform:
 
 ```bash
 ./scripts/install.sh
+```
+
+On Windows, run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1
 ```
 
 The script is safe to rerun. It uses the checked-in `pnpm-lock.yaml` to install the exact dependency versions.

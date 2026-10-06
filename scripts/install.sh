@@ -10,6 +10,12 @@ NODE_HOME="$DATA_HOME/evil-lander/node-v$NODE_VERSION"
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 PROJECT_ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd)
 
+INSTALL_DIR=$PROJECT_ROOT
+HOST_PORT=3000
+ADMIN_USERNAME=""
+ADMIN_PASSWORD=${INSTALL_ADMIN_PASSWORD:-}
+ASSUME_YES=0
+
 fail() {
   printf 'evil-lander installer: %s\n' "$*" >&2
   exit 1
@@ -44,6 +50,163 @@ install_linux_tools() {
   else
     fail "Unsupported Linux package manager. Install curl, tar, awk, grep, and sha256sum."
   fi
+}
+
+usage() {
+  cat <<'EOF'
+Usage: scripts/install.sh [options]
+
+Runs an interactive installer unless --yes is given or stdin is not a terminal.
+
+  --dir PATH         Install location of the web app (default: this checkout)
+  --port PORT        Port the web app listens on (default: 3000)
+  --admin USER       Admin email/username to create (empty skips creation)
+  --yes              Do not prompt; use defaults and the options above
+  -h, --help         Show this help
+
+The admin password is read from INSTALL_ADMIN_PASSWORD or prompted for.
+EOF
+}
+
+parse_args() {
+  while (($#)); do
+    case "$1" in
+      --dir) [[ $# -ge 2 ]] || fail "--dir needs a value."; INSTALL_DIR=$2; shift 2 ;;
+      --port) [[ $# -ge 2 ]] || fail "--port needs a value."; HOST_PORT=$2; shift 2 ;;
+      --admin) [[ $# -ge 2 ]] || fail "--admin needs a value."; ADMIN_USERNAME=$2; shift 2 ;;
+      --yes|-y) ASSUME_YES=1; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) usage >&2; fail "Unknown option: $1" ;;
+    esac
+  done
+}
+
+TUI=""
+detect_tui() {
+  [[ -t 0 && -t 1 ]] || return 0
+  if command -v whiptail >/dev/null 2>&1; then TUI=whiptail
+  elif command -v dialog >/dev/null 2>&1; then TUI=dialog
+  fi
+}
+
+# ask KIND TITLE TEXT DEFAULT: prints the answer; non-zero when cancelled
+ask() {
+  local kind=$1 title=$2 text=$3 default=${4:-} value
+  if [[ -n "$TUI" ]]; then
+    "$TUI" --title "$title" "--$kind" "$text" 10 72 "$default" 3>&1 1>&2 2>&3
+    return
+  fi
+  if [[ "$kind" == passwordbox ]]; then
+    read -r -s -p "$text: " value
+    printf '\n' >&2
+  else
+    read -r -p "$text${default:+ [$default]}: " value
+    value=${value:-$default}
+  fi
+  printf '%s' "$value"
+}
+
+notify() {
+  if [[ -n "$TUI" ]]; then
+    "$TUI" --msgbox "$1" 8 64
+  else
+    printf '%s\n' "$1" >&2
+  fi
+}
+
+validate_port() {
+  [[ "$1" =~ ^[0-9]+$ ]] && ((10#$1 >= 1 && 10#$1 <= 65535))
+}
+
+validate_admin() {
+  [[ "$1" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ && ${#1} -le 254 ]]
+}
+
+gather_config() {
+  if ((ASSUME_YES)) || [[ ! -t 0 ]]; then
+    return
+  fi
+  detect_tui
+  local value password confirm
+
+  value=$(ask inputbox "Install location" "Directory to install the web app into" "$INSTALL_DIR") ||
+    fail "Cancelled."
+  [[ -n "$value" ]] && INSTALL_DIR=$value
+
+  while true; do
+    value=$(ask inputbox "Port" "Port the web app will listen on" "$HOST_PORT") || fail "Cancelled."
+    if validate_port "$value"; then
+      HOST_PORT=$((10#$value))
+      break
+    fi
+    notify "Enter a port between 1 and 65535."
+  done
+
+  while true; do
+    value=$(ask inputbox "Admin account" \
+      "Admin email/username (leave blank to skip creating an admin)" "$ADMIN_USERNAME") ||
+      fail "Cancelled."
+    if [[ -z "$value" ]]; then
+      ADMIN_USERNAME=""
+      ADMIN_PASSWORD=""
+      break
+    fi
+    if ! validate_admin "$value"; then
+      notify "The app signs in with an email-style name, e.g. admin@lander.local."
+      continue
+    fi
+    ADMIN_USERNAME=$value
+    password=$(ask passwordbox "Admin password" "Password for $ADMIN_USERNAME") || fail "Cancelled."
+    confirm=$(ask passwordbox "Admin password" "Confirm password") || fail "Cancelled."
+    if [[ -z "$password" || ${#password} -gt 128 ]]; then
+      notify "Password must be 1-128 characters."
+    elif [[ "$password" != "$confirm" ]]; then
+      notify "Passwords do not match."
+    else
+      ADMIN_PASSWORD=$password
+      break
+    fi
+  done
+}
+
+validate_config() {
+  validate_port "$HOST_PORT" || fail "Invalid port: $HOST_PORT"
+  HOST_PORT=$((10#$HOST_PORT))
+  [[ -n "$INSTALL_DIR" ]] || fail "Install location must not be empty."
+  case "$INSTALL_DIR" in
+    "~") INSTALL_DIR=$HOME ;;
+    "~/"*) INSTALL_DIR=$HOME/${INSTALL_DIR#"~/"} ;;
+  esac
+  mkdir -p -- "$INSTALL_DIR"
+  INSTALL_DIR=$(cd -- "$INSTALL_DIR" && pwd)
+  if [[ -n "$ADMIN_USERNAME" ]]; then
+    validate_admin "$ADMIN_USERNAME" ||
+      fail "Admin name must look like an email address (the app signs in with email)."
+    [[ -n "$ADMIN_PASSWORD" && ${#ADMIN_PASSWORD} -le 128 ]] ||
+      fail "Set INSTALL_ADMIN_PASSWORD (1-128 characters) to create an admin."
+  fi
+}
+
+# Copies the app into INSTALL_DIR unless it is already running from there.
+deploy_files() {
+  [[ "$INSTALL_DIR" == "$PROJECT_ROOT" ]] && return
+  if [[ -n "$(ls -A -- "$INSTALL_DIR")" && ! -f "$INSTALL_DIR/package.json" ]]; then
+    fail "$INSTALL_DIR is not empty and does not contain an existing install."
+  fi
+  printf 'Copying application files to %s...\n' "$INSTALL_DIR"
+  tar -C "$PROJECT_ROOT" \
+    --exclude=./node_modules --exclude=./.next --exclude=./.git \
+    --exclude=./.data --exclude=./.env.local -cf - . |
+    tar -C "$INSTALL_DIR" -xf -
+}
+
+set_env_value() {
+  local key=$1 value=$2 temp
+  temp=$(mktemp)
+  grep -v "^$key=" .env.local > "$temp" || true
+  printf '%s=%s\n' "$key" "$value" >> "$temp"
+  cat -- "$temp" > .env.local
+  rm -f -- "$temp"
 }
 
 node_is_supported() {
@@ -97,13 +260,17 @@ install_node() {
   mkdir -p -- "$(dirname -- "$NODE_HOME")"
   tar -xzf "$temp_dir/$archive" --strip-components=1 \
     -C "$(dirname -- "$NODE_HOME")"
-  rm -f -- "$temp_dir"
+  rm -rf -- "$temp_dir"
   trap - EXIT
   PATH="$NODE_HOME/bin:$PATH"
   export PATH
 }
 
 main() {
+  parse_args "$@"
+  gather_config
+  validate_config
+
   local system
   system=$(uname -s)
   case "$system" in
@@ -125,7 +292,8 @@ main() {
     npm install --global --prefix "$HOME/.local" "pnpm@$PNPM_VERSION"
   fi
 
-  cd "$PROJECT_ROOT"
+  deploy_files
+  cd "$INSTALL_DIR"
   if [[ ! -f .env.local ]]; then
     (umask 077 && : > .env.local)
   fi
@@ -137,6 +305,7 @@ main() {
     fi
     (umask 077 && printf 'AUTH_ENCRYPTION_KEY=%s\n' "$encryption_key" >> .env.local)
   fi
+  set_env_value PORT "$HOST_PORT"
   chmod 600 .env.local
 
   printf 'Installing project dependencies from pnpm-lock.yaml...\n'
@@ -144,9 +313,18 @@ main() {
   printf 'Building Evil-Lander for production...\n'
   pnpm build
 
+  if [[ -n "$ADMIN_USERNAME" ]]; then
+    printf 'Creating admin user %s...\n' "$ADMIN_USERNAME"
+    ADMIN_EMAIL=$ADMIN_USERNAME ADMIN_PASSWORD=$ADMIN_PASSWORD \
+      node scripts/create-admin.mjs
+  else
+    printf 'Skipping admin creation; the first account to sign up becomes admin.\n'
+  fi
+
   printf '\nInstallation complete.\n'
-  printf 'Start development mode with: pnpm dev\n'
-  printf 'Start production mode with: pnpm start\n'
+  printf 'Installed in: %s\n' "$INSTALL_DIR"
+  printf 'Start development mode with: pnpm dev -p %s\n' "$HOST_PORT"
+  printf 'Start production mode with: pnpm start -p %s\n' "$HOST_PORT"
   local node_bin_directory
   node_bin_directory=$(dirname -- "$(command -v node)")
   case ":$PATH:" in
@@ -158,9 +336,9 @@ main() {
     *) printf 'Add pnpm to PATH: export PATH="%s:$PATH"\n' "$LOCAL_BIN" ;;
   esac
   if [[ "$system" == Linux ]]; then
-    printf 'For a Linux systemd user service: ./dashboard install && dashboard start\n'
+    printf 'For a Linux systemd user service: %s/dashboard install && dashboard start\n' "$INSTALL_DIR"
   fi
-  printf 'The app will be available at http://localhost:3000\n'
+  printf 'The app will be available at http://localhost:%s\n' "$HOST_PORT"
 }
 
 main "$@"
