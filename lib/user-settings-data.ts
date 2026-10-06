@@ -1,10 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { getLandingPageSettings } from "@/lib/landing-page-data";
 import {
+  isValidBrandingImageDataUrl,
   isValidWallpaperImageDataUrl,
+  MAX_LOGOS_PER_USER,
   MAX_WALLPAPERS_PER_USER,
   parseBrandingConfig,
   parseThemeConfig,
+  type UserLogo,
   type UserWallpaper,
 } from "@/lib/theme-settings-shared";
 import {
@@ -132,6 +135,63 @@ export function removeUserWallpaper(userId: string, id: string): UserWallpaper[]
     landingPage,
   );
   return updated.users[userId]?.wallpapers ?? [];
+}
+
+export class LogoLimitError extends Error {}
+
+export function getUserLogos(userId: string): UserLogo[] {
+  getLandingPageSettings();
+  const file = readUserSettingsFile();
+  if (!file) throw new Error("The user settings file could not be initialized.");
+  return file.users[userId]?.logos ?? [];
+}
+
+export function addUserLogo(
+  userId: string,
+  value: unknown,
+): UserLogo[] | null {
+  if (!isValidBrandingImageDataUrl(value)) return null;
+  if (getUserLogos(userId).length >= MAX_LOGOS_PER_USER) {
+    throw new LogoLimitError(
+      "You've reached the logo limit. Delete one before adding another.",
+    );
+  }
+  const logo: UserLogo = { id: randomUUID(), dataUrl: value };
+  const landingPage = getLandingPageSettings();
+  const updated = updateUserSettingsFile(
+    (file) => ({
+      ...file,
+      users: {
+        ...file.users,
+        [userId]: {
+          ...file.users[userId],
+          logos: [...(file.users[userId]?.logos ?? []), logo],
+        },
+      },
+    }),
+    landingPage,
+  );
+  return updated.users[userId]?.logos ?? [];
+}
+
+export function removeUserLogo(userId: string, id: string): UserLogo[] {
+  const landingPage = getLandingPageSettings();
+  const updated = updateUserSettingsFile(
+    (file) => ({
+      ...file,
+      users: {
+        ...file.users,
+        [userId]: {
+          ...file.users[userId],
+          logos: (file.users[userId]?.logos ?? []).filter(
+            (logo) => logo.id !== id,
+          ),
+        },
+      },
+    }),
+    landingPage,
+  );
+  return updated.users[userId]?.logos ?? [];
 }
 
 export function getUserLandingWidgetIds(userId: string) {

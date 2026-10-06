@@ -31,10 +31,10 @@ body {
   z-index: 2;
   gap: 0.2rem;
   min-height: 2.75rem;
-  padding: 0.3rem 0.45rem 0;
+  padding: 0.3rem 0 0;
   scrollbar-width: thin;
   scrollbar-color: color-mix(in srgb, var(--dashboard-accent) 38%, transparent) transparent;
-  border-radius: 0.65rem 0.65rem 0 0;
+  border-radius: 1rem 1rem 0 0;
   background: color-mix(in srgb, white 6%, transparent);
   backdrop-filter: blur(14px) saturate(160%);
   -webkit-backdrop-filter: blur(14px) saturate(160%);
@@ -46,7 +46,7 @@ body {
   margin-top: 0.2rem;
   border: 1px solid color-mix(in srgb, white 24%, transparent);
   border-bottom: 0;
-  border-radius: 0.55rem 0.55rem 0 0;
+  border-radius: 0.75rem 0.75rem 0 0;
   background: color-mix(in srgb, white 12%, transparent);
   backdrop-filter: blur(12px) saturate(160%);
   -webkit-backdrop-filter: blur(12px) saturate(160%);

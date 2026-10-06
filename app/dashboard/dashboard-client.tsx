@@ -31,6 +31,7 @@ import {
   defaultThemeConfig,
   type BrandingConfig,
   type ThemeConfig,
+  type UserLogo,
   type UserWallpaper,
 } from "@/lib/theme-settings-shared";
 
@@ -327,6 +328,79 @@ async function deleteUploadedWallpaper(id: string): Promise<UserWallpaper[]> {
   return result.wallpapers;
 }
 
+function isUserLogoList(value: unknown): value is UserLogo[] {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (item) =>
+        typeof item === "object" &&
+        item !== null &&
+        typeof (item as { id?: unknown }).id === "string" &&
+        typeof (item as { dataUrl?: unknown }).dataUrl === "string",
+    )
+  );
+}
+
+async function fetchUploadedLogos(): Promise<UserLogo[]> {
+  const response = await fetch("/api/user-settings/logos", {
+    cache: "no-store",
+  });
+  const result: unknown = await response.json();
+  if (
+    !response.ok ||
+    typeof result !== "object" ||
+    result === null ||
+    !("logos" in result) ||
+    !isUserLogoList(result.logos)
+  ) {
+    throw new Error(
+      await errorMessageFromResponse(response, "Unable to load your saved logos."),
+    );
+  }
+  return result.logos;
+}
+
+async function uploadLogo(dataUrl: string): Promise<UserLogo[]> {
+  const response = await fetch("/api/user-settings/logos", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ dataUrl }),
+  });
+  const result: unknown = await response.json();
+  if (
+    !response.ok ||
+    typeof result !== "object" ||
+    result === null ||
+    !("logos" in result) ||
+    !isUserLogoList(result.logos)
+  ) {
+    throw new Error(
+      await errorMessageFromResponse(response, "Unable to save this logo."),
+    );
+  }
+  return result.logos;
+}
+
+async function deleteUploadedLogo(id: string): Promise<UserLogo[]> {
+  const response = await fetch(
+    `/api/user-settings/logos/${encodeURIComponent(id)}`,
+    { method: "DELETE" },
+  );
+  const result: unknown = await response.json();
+  if (
+    !response.ok ||
+    typeof result !== "object" ||
+    result === null ||
+    !("logos" in result) ||
+    !isUserLogoList(result.logos)
+  ) {
+    throw new Error(
+      await errorMessageFromResponse(response, "Unable to delete this logo."),
+    );
+  }
+  return result.logos;
+}
+
 function wallpaperBackgroundFromInput(value: string) {
   const url = value.trim();
   if (!url) return "none";
@@ -546,6 +620,10 @@ function ThemeCustomizationModal({
   const [isLoadingWallpapers, setIsLoadingWallpapers] = useState(true);
   const [isUploadingWallpaper, setIsUploadingWallpaper] = useState(false);
   const [deletingWallpaperId, setDeletingWallpaperId] = useState("");
+  const [uploadedLogos, setUploadedLogos] = useState<UserLogo[]>([]);
+  const [isLoadingLogos, setIsLoadingLogos] = useState(true);
+  const [isUploadingLogo, setIsUploadingLogo] = useState(false);
+  const [deletingLogoId, setDeletingLogoId] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -567,6 +645,28 @@ function ThemeCustomizationModal({
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const logos = await fetchUploadedLogos();
+        if (!cancelled) setUploadedLogos(logos);
+      } catch (error) {
+        if (!cancelled) {
+          setBrandingError(
+            error instanceof Error ? error.message : "Unable to load your saved logos.",
+          );
+        }
+      } finally {
+        if (!cancelled) setIsLoadingLogos(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const inputClass =
     "w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 dark:border-zinc-600 dark:bg-zinc-900 dark:text-white";
   const selectedPreset =
@@ -1076,79 +1176,159 @@ function ThemeCustomizationModal({
               />
             </label>
 
-            <div className="mt-3 flex items-center gap-3">
-              {brandingDraft.imageDataUrl && (
-                <span className="flex h-12 w-24 items-center justify-center overflow-hidden rounded-lg border border-zinc-200 bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-800">
-                  <Image
-                    alt="Logo preview"
-                    className="max-h-full max-w-full object-contain"
-                    height={48}
-                    src={brandingDraft.imageDataUrl}
-                    unoptimized
-                    width={96}
-                  />
-                </span>
+            <div className="mt-4">
+              <span className="block text-sm font-medium text-zinc-700 dark:text-zinc-200">
+                Uploaded logos
+              </span>
+              <p className="mt-1 text-xs text-zinc-500">
+                Pick a logo you&apos;ve already uploaded, or add a new one.
+              </p>
+              {isLoadingLogos ? (
+                <p className="mt-2 text-xs text-zinc-500">Loading your saved logos…</p>
+              ) : (
+                <div className="mt-2 grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-5">
+                  {uploadedLogos.map((logo) => {
+                    const isSelected = brandingDraft.imageDataUrl === logo.dataUrl;
+                    return (
+                      <div className="group relative" key={logo.id}>
+                        <button
+                          aria-label="Use this logo"
+                          aria-pressed={isSelected}
+                          className={`flex aspect-video w-full items-center justify-center overflow-hidden rounded-lg border bg-zinc-100 p-1 transition dark:bg-zinc-800 ${
+                            isSelected
+                              ? "border-indigo-500 ring-2 ring-indigo-500/30"
+                              : "border-zinc-200 hover:border-zinc-400 dark:border-zinc-700 dark:hover:border-zinc-500"
+                          }`}
+                          onClick={() => {
+                            setBrandingError("");
+                            setBrandingDraft((current) => ({
+                              ...current,
+                              mode: "image",
+                              imageDataUrl: logo.dataUrl,
+                            }));
+                          }}
+                          type="button"
+                        >
+                          <Image
+                            alt="Logo"
+                            className="max-h-full max-w-full object-contain"
+                            height={48}
+                            src={logo.dataUrl}
+                            unoptimized
+                            width={96}
+                          />
+                        </button>
+                        <button
+                          aria-label="Delete this logo"
+                          className="absolute -right-1.5 -top-1.5 hidden h-5 w-5 items-center justify-center rounded-full bg-zinc-900/80 text-xs font-bold leading-none text-white shadow transition group-hover:flex hover:bg-red-600 disabled:cursor-not-allowed disabled:opacity-60"
+                          disabled={deletingLogoId === logo.id}
+                          onClick={async () => {
+                            setDeletingLogoId(logo.id);
+                            setBrandingError("");
+                            try {
+                              const logos = await deleteUploadedLogo(logo.id);
+                              setUploadedLogos(logos);
+                              if (isSelected) {
+                                setBrandingDraft((current) => ({
+                                  ...current,
+                                  mode: "text",
+                                  imageDataUrl: null,
+                                }));
+                              }
+                            } catch (error) {
+                              setBrandingError(
+                                error instanceof Error ? error.message : "Unable to delete this logo.",
+                              );
+                            } finally {
+                              setDeletingLogoId("");
+                            }
+                          }}
+                          type="button"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    );
+                  })}
+                  <label
+                    className={`flex aspect-video w-full cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-zinc-300 text-center text-xs font-medium text-zinc-500 transition hover:border-indigo-400 hover:text-indigo-600 dark:border-zinc-600 dark:text-zinc-400 ${
+                      isUploadingLogo ? "pointer-events-none opacity-60" : ""
+                    }`}
+                    htmlFor="branding-logo-file"
+                  >
+                    <span className="text-lg leading-none">+</span>
+                    {isUploadingLogo ? "Uploading…" : "Add more"}
+                  </label>
+                </div>
               )}
-              <label
-                className="cursor-pointer rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-xs font-medium text-zinc-600 transition hover:border-indigo-400 hover:text-indigo-600 dark:border-zinc-600 dark:text-zinc-300"
-                htmlFor="branding-logo-file"
-              >
-                {brandingDraft.imageDataUrl ? "Replace logo image" : "Upload logo image"}
-              </label>
-              {brandingDraft.imageDataUrl && (
-                <button
-                  className="rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-xs font-medium text-zinc-600 transition hover:border-red-400 hover:text-red-700 dark:border-zinc-700 dark:text-zinc-300 dark:hover:text-red-300"
-                  onClick={() => {
-                    setBrandingError("");
-                    setBrandingDraft((current) => ({
-                      ...current,
-                      mode: "text",
-                      imageDataUrl: null,
-                    }));
-                  }}
-                  type="button"
-                >
-                  Remove logo
-                </button>
-              )}
-            </div>
-            <input
-              accept="image/png,image/jpeg,image/webp,image/gif"
-              className="sr-only"
-              id="branding-logo-file"
-              onChange={(event) => {
-                const file = event.currentTarget.files?.[0];
-                event.currentTarget.value = "";
-                if (!file) return;
-                if (!["image/png", "image/jpeg", "image/webp", "image/gif"].includes(file.type)) {
-                  setBrandingError("Choose a PNG, JPEG, WebP, or GIF logo.");
-                  return;
-                }
-                if (file.size > 4 * 1024 * 1024) {
-                  setBrandingError("Logo images must be 4 MiB or smaller.");
-                  return;
-                }
-                const reader = new FileReader();
-                reader.onload = () => {
-                  if (typeof reader.result !== "string" || !isValidBrandingImageDataUrl(reader.result)) {
-                    setBrandingError("The selected logo could not be read.");
+              <input
+                accept="image/png,image/jpeg,image/webp,image/gif"
+                className="sr-only"
+                id="branding-logo-file"
+                onChange={(event) => {
+                  const file = event.currentTarget.files?.[0];
+                  event.currentTarget.value = "";
+                  if (!file) return;
+                  if (!["image/png", "image/jpeg", "image/webp", "image/gif"].includes(file.type)) {
+                    setBrandingError("Choose a PNG, JPEG, WebP, or GIF logo.");
                     return;
                   }
+                  if (file.size > 4 * 1024 * 1024) {
+                    setBrandingError("Logo images must be 4 MiB or smaller.");
+                    return;
+                  }
+                  const reader = new FileReader();
+                  reader.onload = () => {
+                    void (async () => {
+                      if (typeof reader.result !== "string" || !isValidBrandingImageDataUrl(reader.result)) {
+                        setBrandingError("The selected logo could not be read.");
+                        return;
+                      }
+                      setIsUploadingLogo(true);
+                      setBrandingError("");
+                      try {
+                        const dataUrl = reader.result;
+                        const logos = await uploadLogo(dataUrl);
+                        setUploadedLogos(logos);
+                        setBrandingDraft((current) => ({
+                          ...current,
+                          mode: "image",
+                          imageDataUrl: dataUrl,
+                        }));
+                      } catch (error) {
+                        setBrandingError(
+                          error instanceof Error ? error.message : "Unable to save this logo.",
+                        );
+                      } finally {
+                        setIsUploadingLogo(false);
+                      }
+                    })();
+                  };
+                  reader.onerror = () => setBrandingError("The selected logo could not be read.");
+                  reader.readAsDataURL(file);
+                }}
+                type="file"
+              />
+              <span className="mt-1 block text-xs font-normal text-zinc-500">
+                Logo images up to 4 MiB are saved to your account so you can reuse them later.
+              </span>
+            </div>
+            {brandingDraft.imageDataUrl && (
+              <button
+                className="mt-2 rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-xs font-medium text-zinc-600 transition hover:border-red-400 hover:text-red-700 dark:border-zinc-700 dark:text-zinc-300 dark:hover:text-red-300"
+                onClick={() => {
                   setBrandingError("");
                   setBrandingDraft((current) => ({
                     ...current,
-                    mode: "image",
-                    imageDataUrl: reader.result as string,
+                    mode: "text",
+                    imageDataUrl: null,
                   }));
-                };
-                reader.onerror = () => setBrandingError("The selected logo could not be read.");
-                reader.readAsDataURL(file);
-              }}
-              type="file"
-            />
-            <span className="mt-1 block text-xs font-normal text-zinc-500">
-              Logo images up to 4 MiB are saved to your account.
-            </span>
+                }}
+                type="button"
+              >
+                Remove logo
+              </button>
+            )}
 
             {brandingError && (
               <p className="mt-2 text-xs text-red-600" role="alert">
@@ -2829,9 +3009,11 @@ function DesktopObject({
         start.current.x + (deltaX / start.current.canvasWidth) * 100,
       ),
     );
-    const y = Math.max(
-      0,
-      Math.min(start.current.canvasHeight - start.current.objectHeight, start.current.y + deltaY),
+    const y = Math.round(
+      Math.max(
+        0,
+        Math.min(start.current.canvasHeight - start.current.objectHeight, start.current.y + deltaY),
+      ),
     );
     start.current.nextX = x;
     start.current.nextY = y;
@@ -4112,7 +4294,7 @@ export default function DashboardClient({
         .map((item) => (
           <section
             aria-label={item.title}
-            className={`min-h-0 flex-1 flex-col overflow-hidden border border-zinc-300 bg-white shadow dark:border-zinc-700 ${activeDashboard.id === item.id ? "flex" : "hidden"} ${dashboard.dashboards.length > 1 ? "rounded-b-2xl rounded-t-none" : "rounded-xl"}`}
+            className={`min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-zinc-300 bg-white shadow dark:border-zinc-700 ${activeDashboard.id === item.id ? "flex" : "hidden"}`}
             key={item.id}
           >
             <div className="relative min-h-0 flex-1">
@@ -4142,7 +4324,7 @@ export default function DashboardClient({
           );
           return (
             <div
-              className={`relative overflow-hidden border border-zinc-300/70 bg-white/40 shadow-inner dark:border-zinc-700 dark:bg-zinc-900/30 ${isActive ? "" : "hidden"} ${dashboard.dashboards.length > 1 ? "rounded-b-2xl rounded-t-none" : "rounded-2xl"} ${isEditMode ? "ring-2 ring-indigo-400/50" : ""}`}
+              className={`relative overflow-hidden rounded-xl border border-zinc-300/70 bg-white/40 shadow-inner dark:border-zinc-700 dark:bg-zinc-900/30 ${isActive ? "" : "hidden"} ${isEditMode ? "ring-2 ring-indigo-400/50" : ""}`}
               data-dashboard-canvas
               key={item.id}
               style={{

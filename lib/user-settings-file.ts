@@ -2,11 +2,13 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { LandingPageSettings } from "@/lib/landing-page-shared";
 import {
+  isValidUserLogoList,
   isValidUserWallpaperList,
   parseBrandingConfig,
   parseThemeConfig,
   type BrandingConfig,
   type ThemeConfig,
+  type UserLogo,
   type UserWallpaper,
 } from "@/lib/theme-settings-shared";
 import { isProfileAvatar } from "@/lib/user-profile-shared";
@@ -20,6 +22,7 @@ export type UserSettingsFile = {
       theme?: ThemeConfig;
       branding?: BrandingConfig;
       wallpapers?: UserWallpaper[];
+      logos?: UserLogo[];
       landingWidgetIds?: string[];
       landingWidgetPositions?: Record<string, { x: number; y: number }>;
       profile?: { displayName: string; avatar: string };
@@ -96,6 +99,12 @@ export function readUserSettingsFile(): UserSettingsFile | null {
       !isValidUserWallpaperList(value.wallpapers)
     ) {
       throw new Error(`The user settings file contains invalid wallpapers for ${userId}.`);
+    }
+    if (
+      "logos" in value &&
+      !isValidUserLogoList(value.logos)
+    ) {
+      throw new Error(`The user settings file contains invalid logos for ${userId}.`);
     }
     if (
       "profile" in value &&

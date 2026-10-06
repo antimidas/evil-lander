@@ -260,3 +260,27 @@ export function parseBrandingConfig(value: unknown): BrandingConfig | null {
     imageDataUrl: value.imageDataUrl,
   };
 }
+
+export type UserLogo = { id: string; dataUrl: string };
+
+export const MAX_LOGOS_PER_USER = 24;
+
+export function isValidUserLogoList(value: unknown): value is UserLogo[] {
+  if (!Array.isArray(value) || value.length > MAX_LOGOS_PER_USER) return false;
+  const ids = new Set<string>();
+  for (const item of value) {
+    if (
+      typeof item !== "object" ||
+      item === null ||
+      Array.isArray(item) ||
+      !("id" in item) ||
+      !isWallpaperId(item.id) ||
+      !("dataUrl" in item) ||
+      !isValidBrandingImageDataUrl(item.dataUrl)
+    ) {
+      return false;
+    }
+    ids.add(item.id);
+  }
+  return ids.size === value.length;
+}
